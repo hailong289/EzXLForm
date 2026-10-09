@@ -27,8 +27,9 @@ const shortcutGroups = [
   {
     title: 'Bảng và sheet',
     rows: [
-      ['Enter', 'Lưu tên cột, tên sheet, hoặc áp dụng bộ lọc nâng cao'],
-      ['Esc', 'Hủy đổi tên, hoặc xóa ô tìm trong bảng'],
+      ['Bấm đúp ô', 'Sửa trực tiếp trong ô. Enter lưu, Esc hủy'],
+      ['Enter', 'Lưu ô đang sửa, tên cột, tên sheet, hoặc áp dụng bộ lọc nâng cao'],
+      ['Esc', 'Hủy sửa ô, hủy đổi tên, hoặc xóa ô tìm trong bảng'],
     ],
   },
 ]
@@ -65,7 +66,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         <section class="space-y-1">
           <h4 class="font-semibold">Sửa dữ liệu</h4>
           <p class="text-base-content/80">
-            Chọn một dòng trên bảng để đổ vào form. Gõ trên form là bảng cập nhật ngay.
+            Chọn một dòng trên bảng để đổ vào form. Bấm đúp một ô để sửa ngay trong ô đó.
+            Gõ trên form là bảng cập nhật ngay.
             Có thể đổi tên cột, kéo để đổi thứ tự cột, lọc dòng và chọn dòng tiêu đề của sheet.
           </p>
         </section>

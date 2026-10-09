@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref, watch, nextTick } from 'vue'
 import type { CellValue, ColumnHeader } from '@/types/excel'
+import { DEFAULT_DATE_FORMAT, formatDateValue, parseDateToIso } from '@/utils/dateFormat'
 
 const props = defineProps<{
   value: CellValue
   columnKey: string
   rowIndex: number
   dataType?: ColumnHeader['dataType']
+  dateFormat?: string
   isEditing: boolean
 }>()
 
@@ -23,10 +25,16 @@ watch(
   () => props.isEditing,
   (editing) => {
     if (editing) {
-      localVal.value = props.value != null ? String(props.value) : ''
+      if (props.dataType === 'date') {
+        localVal.value = formatDateValue(props.value, props.dateFormat ?? DEFAULT_DATE_FORMAT)
+      } else if (props.dataType === 'boolean') {
+        localVal.value = props.value ? 'true' : 'false'
+      } else {
+        localVal.value = props.value != null ? String(props.value) : ''
+      }
       nextTick(() => {
         inputRef.value?.focus()
-        inputRef.value?.select()
+        if (props.dataType !== 'boolean') inputRef.value?.select()
       })
     }
   },
@@ -38,9 +46,17 @@ function save() {
 
   let finalVal: CellValue = localVal.value
   if (props.dataType === 'number') {
-    finalVal = localVal.value.trim() === '' ? null : Number(localVal.value)
+    const raw = localVal.value.trim()
+    if (raw === '') finalVal = null
+    else {
+      const num = Number(raw)
+      finalVal = Number.isNaN(num) ? raw : num
+    }
   } else if (props.dataType === 'boolean') {
-    finalVal = localVal.value === 'true' || localVal.value === '1'
+    finalVal = localVal.value === 'true'
+  } else if (props.dataType === 'date') {
+    const raw = localVal.value.trim()
+    finalVal = raw === '' ? null : (parseDateToIso(raw, props.dateFormat ?? DEFAULT_DATE_FORMAT) ?? raw)
   }
 
   emit('update', finalVal)
@@ -49,6 +65,10 @@ function save() {
 
 function cancel() {
   emit('end-edit')
+}
+
+function onBooleanChange(event: Event) {
+  localVal.value = (event.target as HTMLInputElement).checked ? 'true' : 'false'
 }
 
 function formatDisplay(val: CellValue): string {
@@ -60,25 +80,38 @@ function formatDisplay(val: CellValue): string {
   if (props.dataType === 'boolean') {
     return val ? '✓' : '✗'
   }
+  if (props.dataType === 'date') return formatDateValue(val, props.dateFormat ?? DEFAULT_DATE_FORMAT)
   return String(val)
 }
 </script>
 
 <template>
   <td
-    class="p-0 h-8 border-r border-base-300 relative text-xs"
+    class="p-0 h-8 max-w-[150px] border-r border-b border-base-300 relative text-xs"
     :class="{ 'cell-editing': props.isEditing }"
-    @dblclick="emit('start-edit')"
+    @dblclick.stop="emit('start-edit')"
   >
-    <!-- Inline Edit Input -->
     <div v-if="props.isEditing" class="h-full w-full flex items-center p-0.5">
       <input
+        v-if="props.dataType === 'boolean'"
+        ref="inputRef"
+        type="checkbox"
+        class="checkbox checkbox-xs checkbox-primary mx-auto"
+        :checked="localVal === 'true'"
+        @change="onBooleanChange"
+        @blur="save"
+        @keydown.enter.prevent="save"
+        @keydown.esc="cancel"
+        @click.stop
+      />
+      <input
+        v-else
         ref="inputRef"
         v-model="localVal"
-        :type="props.dataType === 'number' ? 'number' : props.dataType === 'date' ? 'date' : 'text'"
-        class="input input-xs w-full h-7 px-1.5 py-0 text-xs rounded border-primary outline-none focus:ring-1 focus:ring-primary"
+        :type="props.dataType === 'number' ? 'number' : 'text'"
+        class="input input-xs select-text w-full h-7 px-1.5 py-0 text-xs rounded border-primary outline-none focus:ring-1 focus:ring-primary"
         @blur="save"
-        @keydown.enter="save"
+        @keydown.enter.prevent="save"
         @keydown.esc="cancel"
         @click.stop
       />
@@ -92,7 +125,7 @@ function formatDisplay(val: CellValue): string {
         'text-right justify-end font-mono': props.dataType === 'number',
         'text-center justify-center font-bold text-primary': props.dataType === 'boolean',
       }"
-      :title="props.value != null ? String(props.value) : ''"
+      :title="props.value != null && props.value !== '' ? String(props.value) : 'Bấm đúp để sửa trong ô'"
     >
       {{ formatDisplay(props.value) }}
     </div>

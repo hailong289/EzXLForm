@@ -22,10 +22,11 @@ import { PAGE_SIZE_OPTIONS, useAppConfigStore } from '@/stores/appConfigStore'
 import { useHistory } from '@/composables/useHistory'
 import RowForm from './RowForm.vue'
 import TableHeaderCell from './TableHeaderCell.vue'
+import TableRowCell from './TableRowCell.vue'
 import BatchActionBar from './BatchActionBar.vue'
-import type { AdvancedFilterRule, ColumnHeader, RowData } from '@/types/excel'
+import type { AdvancedFilterRule, CellValue, ColumnHeader, RowData } from '@/types/excel'
 import { ensureSourceGrid, headerChoiceIndexes, previewGridLine, sheetRowCount } from '@/utils/sheetGrid'
-import { DATE_FORMATS, DEFAULT_DATE_FORMAT, formatDateValue } from '@/utils/dateFormat'
+import { DATE_FORMATS, DEFAULT_DATE_FORMAT } from '@/utils/dateFormat'
 import { activeFilterRules, operatorsFor, operatorNeedsValue, rowMatchesFilters } from '@/utils/rowFilter'
 import { readRange, scanRows } from '@/composables/rowPageStore'
 
@@ -443,6 +444,25 @@ function selectRowForEdit(rowIndex: number) {
   selectedRowIndex.value = rowIndex
 }
 
+function startCellEdit(rowIndex: number, columnKey: string) {
+  selectedRowIndex.value = rowIndex
+  selectionStore.setEditingCell(rowIndex, columnKey)
+}
+
+function sameCell(left: CellValue, right: CellValue): boolean {
+  const empty = (value: CellValue) => value == null || value === ''
+  if (empty(left) && empty(right)) return true
+  return left === right
+}
+
+async function saveCell(rowIndex: number, columnKey: string, value: CellValue) {
+  if (!activeSheet.value) return
+  if (sameCell(rowAt(rowIndex)?.[columnKey] ?? null, value)) return
+  const next = { ...(rowAt(rowIndex) ?? {}), [columnKey]: value }
+  if (activeSheet.value.paged) visibleRows.value = { ...visibleRows.value, [rowIndex]: next }
+  await handleUpdateRow(rowIndex, next)
+}
+
 // Form Handlers: Tạo, Sửa, Xóa từng dòng
 async function handleCreateRow(newRowData: RowData) {
   if (!activeSheet.value) return
@@ -767,22 +787,6 @@ function onHeaderSort(key: string, order: 'asc' | 'desc') {
   })
 }
 
-function formatListCell(
-  val: RowData[string] | undefined,
-  header: ColumnHeader,
-  _revision: number,
-): string {
-  void _revision
-  if (val === null || val === undefined || val === '') return ''
-  if (header.dataType === 'boolean') return val ? '✓' : '✗'
-  if (header.dataType === 'number') {
-    const num = Number(val)
-    return Number.isNaN(num) ? String(val) : num.toLocaleString()
-  }
-  if (header.dataType === 'date') return formatDateValue(val, header.dateFormat)
-  return String(val)
-}
-
 function onHeaderSetDateFormat(key: string, format: string) {
   if (!activeSheet.value) return
   const header = headers.value.find((item) => item.key === key)
@@ -848,6 +852,7 @@ function addNamedColumn() {
         :sheet-id="activeSheet?.id"
         :selected-row-index="selectedRowIndex"
         :selected-row="selectedRow"
+        :data-revision="workbookStore.dataRevision"
         :total-rows="rowTotal"
         :table-hidden="!showTableList"
         @create="handleCreateRow"
@@ -1106,15 +1111,22 @@ function addNamedColumn() {
                 </div>
               </td>
 
-              <!-- Data Cells (Click để chọn dòng vào Form) -->
-              <td
+              <TableRowCell
                 v-for="h in headers"
                 :key="h.key"
-                class="px-2 py-1.5 border-r border-b border-base-300 text-xs overflow-hidden text-ellipsis whitespace-nowrap max-w-[150px]"
-                :title="String(rowAt(realIdx)?.[h.key] ?? '')"
-              >
-                {{ formatListCell(rowAt(realIdx)?.[h.key], h, workbookStore.dataRevision) }}
-              </td>
+                :value="rowAt(realIdx)?.[h.key] ?? null"
+                :column-key="h.key"
+                :row-index="realIdx"
+                :data-type="h.dataType"
+                :date-format="h.dateFormat"
+                :is-editing="
+                  selectionStore.editingCell?.rowIndex === realIdx &&
+                  selectionStore.editingCell?.columnKey === h.key
+                "
+                @start-edit="startCellEdit(realIdx, h.key)"
+                @end-edit="selectionStore.setEditingCell(null, null)"
+                @update="(value) => saveCell(realIdx, h.key, value)"
+              />
             </tr>
           </tbody>
         </table>

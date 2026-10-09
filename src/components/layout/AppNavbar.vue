@@ -390,7 +390,7 @@ function onFileSelected(event: Event) {
                       {{ taskStatusLabel(task.status) }}
                     </span>
                   </div>
-                  <p class="truncate text-[10px] opacity-60">{{ task.detail }}</p>
+                  <p class="mt-0.5 line-clamp-2 text-xs leading-snug opacity-70 break-words">{{ task.detail }}</p>
                 </div>
                 <span class="shrink-0 font-mono text-[11px]">{{ task.percent }}%</span>
               </div>

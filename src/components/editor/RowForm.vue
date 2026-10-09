@@ -25,6 +25,7 @@ const props = defineProps<{
   headers: ColumnHeader[]
   selectedRowIndex: number | null
   selectedRow: RowData | null
+  dataRevision?: number
   totalRows: number
   sheetId?: string
   tableHidden?: boolean
@@ -46,6 +47,7 @@ const emit = defineEmits<{
 
 // Dữ liệu trong form
 const formData = ref<Record<string, string>>({})
+let formWrite = 0
 const showDeleteConfirm = ref(false)
 const jumpInput = ref<number | ''>('')
 const isRealtimeSaved = ref(false)
@@ -74,6 +76,17 @@ watch(
     syncFormFromSelection()
   },
   { immediate: true },
+)
+
+watch(
+  () => props.dataRevision,
+  () => {
+    if (formWrite > 0) {
+      formWrite = 0
+      return
+    }
+    syncFormFromSelection()
+  },
 )
 
 // Khi headers thay đổi, đảm bảo các keys tồn tại
@@ -181,6 +194,7 @@ function onFieldInput(key: string, raw: string) {
   formData.value = { ...formData.value, [key]: raw }
   if (props.selectedRowIndex === null) return
 
+  formWrite += 1
   emit('update', props.selectedRowIndex, parseFormData())
 
   isRealtimeSaved.value = true

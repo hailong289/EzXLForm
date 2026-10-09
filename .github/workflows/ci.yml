@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install and build
+        run: |
+          npm ci
+          npm run build
+
+      # Vercel đã kết nối GitHub sẵn, không deploy từ Actions.
+      # - name: Deploy to Vercel
+      #   if: github.event_name != 'pull_request'
+      #   env:
+      #     VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      #     VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      #     VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      #   run: |
+      #     if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_ORG_ID" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
+      #       echo "Bỏ qua deploy: thêm secret VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID."
+      #       exit 0
+      #     fi
+      #     npx --yes vercel@latest deploy --prod --yes --token "$VERCEL_TOKEN"
+      #
+      # - name: Deploy preview to Vercel
+      #   if: github.event_name == 'pull_request'
+      #   env:
+      #     VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      #     VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      #     VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      #   run: |
+      #     if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_ORG_ID" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
+      #       echo "Bỏ qua preview: thêm secret VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID."
+      #       exit 0
+      #     fi
+      #     npx --yes vercel@latest deploy --yes --token "$VERCEL_TOKEN"
