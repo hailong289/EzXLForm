@@ -105,11 +105,171 @@ export async function scanRows(
   }
 }
 
+interface SheetOrder {
+  order: number[] | null
+  nextPhysical: number
+}
+
+const sheetOrders = new Map<string, SheetOrder>()
+
+function orderKey(sheetId: string): string {
+  return `order:${sheetId}`
+}
+
+export function clearSheetOrder(sheetId: string): void {
+  sheetOrders.delete(sheetId)
+}
+
+export function clearAllSheetOrders(): void {
+  sheetOrders.clear()
+}
+
+export function hasSheetOrder(sheetId: string): boolean {
+  return Boolean(sheetOrders.get(sheetId)?.order)
+}
+
+export function physicalOf(sheetId: string, logical: number): number {
+  const state = sheetOrders.get(sheetId)
+  if (!state?.order) return logical
+  return state.order[logical] ?? logical
+}
+
+/** Chèn một khóa vật lý vào thứ tự hiển thị. Không dịch các dòng đã lưu. */
+export function placeInsertedRow(sheetId: string, at: number, count: number): number {
+  const state = sheetOrders.get(sheetId) ?? { order: null, nextPhysical: count }
+  const physical = state.order ? state.nextPhysical : count
+  state.nextPhysical = physical + 1
+  if (at >= count && !state.order) {
+    sheetOrders.set(sheetId, state)
+    return physical
+  }
+  if (!state.order) {
+    const order = new Array<number>(count + 1)
+    for (let index = 0; index < at; index++) order[index] = index
+    order[at] = physical
+    for (let index = at; index < count; index++) order[index + 1] = index
+    state.order = order
+  } else if (at >= state.order.length) {
+    state.order.push(physical)
+  } else {
+    state.order.splice(at, 0, physical)
+  }
+  sheetOrders.set(sheetId, state)
+  return physical
+}
+
+export function moveLogicalRow(sheetId: string, from: number, to: number, count: number): boolean {
+  if (from === to || from < 0 || to < 0 || from >= count || to >= count) return false
+  const state = sheetOrders.get(sheetId) ?? { order: null, nextPhysical: count }
+  if (!state.order) {
+    state.order = Array.from({ length: count }, (_, index) => index)
+  }
+  const [moved] = state.order.splice(from, 1)
+  state.order.splice(to, 0, moved)
+  sheetOrders.set(sheetId, state)
+  return true
+}
+
+export function removeLogicalRow(sheetId: string, logical: number): number | null {
+  const state = sheetOrders.get(sheetId)
+  if (!state?.order) return null
+  if (logical < 0 || logical >= state.order.length) return null
+  const physical = state.order[logical]
+  state.order.splice(logical, 1)
+  if (state.order.length === 0) state.order = null
+  return physical
+}
+
+export async function readLogicalRange(sheetId: string, start: number, count: number): Promise<RowData[]> {
+  const order = sheetOrders.get(sheetId)?.order
+  if (!order || count <= 0) return readRange(sheetId, start, count)
+  const rows: RowData[] = []
+  let offset = 0
+  while (offset < count) {
+    const physical = order[start + offset] ?? start + offset
+    let run = 1
+    while (offset + run < count && order[start + offset + run] === physical + run) run += 1
+    const chunk = await readRange(sheetId, physical, run)
+    for (let index = 0; index < run; index++) rows.push(chunk[index] ?? {})
+    offset += run
+  }
+  return rows
+}
+
+export async function scanLogicalRows(
+  sheetId: string,
+  rowCount: number,
+  visit: (index: number, row: RowData) => boolean | Promise<boolean>,
+): Promise<void> {
+  if (!sheetOrders.get(sheetId)?.order) {
+    await scanRows(sheetId, rowCount, visit)
+    return
+  }
+  const batchSize = 2000
+  for (let start = 0; start < rowCount; start += batchSize) {
+    const count = Math.min(batchSize, rowCount - start)
+    const rows = await readLogicalRange(sheetId, start, count)
+    for (let offset = 0; offset < rows.length; offset++) {
+      const keep = await visit(start + offset, rows[offset])
+      if (keep === false) return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+}
+
+export function sheetOrderLength(sheetId: string): number {
+  return sheetOrders.get(sheetId)?.order?.length ?? 0
+}
+
+export async function persistSheetOrder(sheetId: string): Promise<void> {
+  const state = sheetOrders.get(sheetId)
+  if (!state?.order) return
+  const packed = Uint32Array.from(state.order)
+  const db = await openDatabase()
+  const tx = db.transaction('meta', 'readwrite')
+  tx.objectStore('meta').put(
+    { nextPhysical: state.nextPhysical, order: packed },
+    orderKey(sheetId),
+  )
+  await transactionDone(tx)
+}
+
+function unpackOrder(raw: unknown): number[] | null {
+  if (raw instanceof Uint32Array) return Array.from(raw)
+  if (raw instanceof ArrayBuffer) return Array.from(new Uint32Array(raw))
+  if (Array.isArray(raw)) return raw.map((item) => Number(item))
+  return null
+}
+
+export async function restoreSheetOrders(sheetIds: string[]): Promise<boolean> {
+  let restored = false
+  for (const sheetId of sheetIds) {
+    const db = await openDatabase()
+    const tx = db.transaction('meta', 'readonly')
+    const request = tx.objectStore('meta').get(orderKey(sheetId))
+    const value = await new Promise<{ order?: unknown; nextPhysical?: number } | undefined>((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result as { order?: unknown; nextPhysical?: number } | undefined)
+      request.onerror = () => reject(request.error)
+    })
+    await transactionDone(tx)
+    const order = unpackOrder(value?.order)
+    if (!order?.length) continue
+    sheetOrders.set(sheetId, {
+      order,
+      nextPhysical: value?.nextPhysical ?? order.reduce((max, item) => Math.max(max, item), 0) + 1,
+    })
+    restored = true
+  }
+  return restored
+}
+
 export async function discardSheet(sheetId: string): Promise<void> {
+  clearSheetOrder(sheetId)
   const db = await openDatabase()
   const tx = db.transaction(['rows', 'meta'], 'readwrite')
   tx.objectStore('rows').delete(IDBKeyRange.bound([sheetId, 0], [sheetId, Number.MAX_SAFE_INTEGER]))
   tx.objectStore('meta').delete(sheetId)
+  tx.objectStore('meta').delete(orderKey(sheetId))
   await transactionDone(tx)
 }
 

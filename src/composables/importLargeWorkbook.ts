@@ -7,7 +7,7 @@ import type {
   SheetData,
   WorkbookData,
 } from '@/types/excel'
-import { discardSheet, saveSheetMeta, scanRows, writeRowBatch } from '@/composables/rowPageStore'
+import { discardSheet, saveSheetMeta, scanLogicalRows, writeRowBatch } from '@/composables/rowPageStore'
 import { DEFAULT_DATE_FORMAT, formatDateValue } from '@/utils/dateFormat'
 import { entryStream, listZipEntries, readEntryText, type ZipEntry } from '@/utils/zipRead'
 import { StoredZipWriter } from '@/utils/zipWrite'
@@ -584,7 +584,7 @@ async function writePagedXlsx(workbook: WorkbookData, filename: string, onProgre
       await push(`<row r="1">${headerXml}</row>`)
       let line = ''
       let pendingRows = 0
-      await scanRows(sheet.id, sheet.rowCount ?? 0, async (rowIndex, row) => {
+      await scanLogicalRows(sheet.id, sheet.rowCount ?? 0, async (rowIndex, row) => {
         const excelRow = rowIndex + 2
         const cells = sheet.headers.map((header, column) => cellXml(column, excelRow, row[header.key] ?? null, header)).join('')
         line += `<row r="${excelRow}">${cells}</row>`
@@ -615,7 +615,7 @@ async function writePagedCsv(sheet: SheetData, filename: string, onProgress: (me
   await sink.write(encoder.encode(`\uFEFF${header}\r\n`))
   let block = ''
   let pending = 0
-  await scanRows(sheet.id, sheet.rowCount ?? 0, async (rowIndex, row) => {
+  await scanLogicalRows(sheet.id, sheet.rowCount ?? 0, async (rowIndex, row) => {
     const line = sheet.headers
       .map((item) => {
         const value = item.dataType === 'date' ? formatDateValue(row[item.key], item.dateFormat) : row[item.key] ?? ''

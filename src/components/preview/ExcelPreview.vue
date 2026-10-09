@@ -6,7 +6,7 @@ import PreviewSheetTabs from './PreviewSheetTabs.vue'
 import { columnIndexToLetter } from '@/types/excel'
 import type { CellValue, RowData } from '@/types/excel'
 import { formatDateValue } from '@/utils/dateFormat'
-import { readRange } from '@/composables/rowPageStore'
+import { readLogicalRange } from '@/composables/rowPageStore'
 import { cellToDisplayString } from '@/utils/sheetGrid'
 
 const workbookStore = useWorkbookStore()
@@ -43,7 +43,7 @@ watch(
       pagedPreviewRows.value = []
       return
     }
-    pagedPreviewRows.value = await readRange(sheet.id, 0, Math.min(200, sheet.rowCount ?? 0))
+    pagedPreviewRows.value = await readLogicalRange(sheet.id, 0, Math.min(200, sheet.rowCount ?? 0))
   },
   { immediate: true },
 )

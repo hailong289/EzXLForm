@@ -57,6 +57,15 @@ export function syncBodyRows(sheet: SheetData): void {
   sheet.rows.forEach((row, index) => writeBodyRow(sheet, index, row))
 }
 
+export function moveBodyRow(sheet: SheetData, from: number, to: number): void {
+  if (sheet.paged) return
+  const grid = gridRows(sheet)
+  const base = bodyLineIndex(sheet, 0)
+  if (base + from < 0 || base + from >= grid.length) return
+  const [line] = grid.splice(base + from, 1)
+  grid.splice(Math.min(base + to, grid.length), 0, line)
+}
+
 export function removeBodyRows(sheet: SheetData, rowIndexes: number[]): void {
   if (sheet.paged) return
   const grid = gridRows(sheet)

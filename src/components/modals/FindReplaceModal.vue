@@ -5,7 +5,7 @@ import { useWorkbookStore } from '@/stores/workbookStore'
 import { PAGE_SIZE_OPTIONS, useAppConfigStore } from '@/stores/appConfigStore'
 import { useHistory } from '@/composables/useHistory'
 import { useProgressTaskStore } from '@/stores/progressTaskStore'
-import { scanRows } from '@/composables/rowPageStore'
+import { scanLogicalRows } from '@/composables/rowPageStore'
 import { rowMatchesFind } from '@/utils/rowFilter'
 import { formatDateValue } from '@/utils/dateFormat'
 import type { ColumnHeader, FindReplaceOptions, RowData } from '@/types/excel'
@@ -142,7 +142,7 @@ async function handleFindOnly() {
   let count = 0
   try {
     if (sheet.paged) {
-      await scanRows(sheet.id, sheet.rowCount ?? 0, (rowIndex, row) => {
+      await scanLogicalRows(sheet.id, sheet.rowCount ?? 0, (rowIndex, row) => {
         if (rowMatchesFind(row, headers, options)) {
           count += 1
           rememberMatch(rowIndex, row, headers)

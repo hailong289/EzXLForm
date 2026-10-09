@@ -28,7 +28,7 @@ import type { AdvancedFilterRule, CellValue, ColumnHeader, RowData } from '@/typ
 import { ensureSourceGrid, headerChoiceIndexes, previewGridLine, sheetRowCount } from '@/utils/sheetGrid'
 import { DATE_FORMATS, DEFAULT_DATE_FORMAT } from '@/utils/dateFormat'
 import { activeFilterRules, operatorsFor, operatorNeedsValue, rowMatchesFilters } from '@/utils/rowFilter'
-import { readRange, scanRows } from '@/composables/rowPageStore'
+import { readLogicalRange, scanLogicalRows } from '@/composables/rowPageStore'
 
 const workbookStore = useWorkbookStore()
 const selectionStore = useSelectionStore()
@@ -119,14 +119,20 @@ onMounted(() => {
     headerSizeObserver = new ResizeObserver(() => measureColumns())
     headerSizeObserver.observe(tableScrollRef.value)
   })
+  window.addEventListener('pagehide', onEditorPageHide)
 })
 
 onUnmounted(() => {
   editorResizeObserver?.disconnect()
   headerSizeObserver?.disconnect()
+  window.removeEventListener('pagehide', onEditorPageHide)
   document.removeEventListener('mousemove', onResizeMouseMove)
   document.removeEventListener('mouseup', stopResizeForm)
 })
+
+function onEditorPageHide() {
+  void flushAllPagedEdits()
+}
 
 // Active sheet & rows
 const activeSheet = computed(() => workbookStore.activeSheet)
@@ -134,11 +140,17 @@ const headers = computed(() => activeSheet.value?.headers ?? [])
 const allRows = computed(() => activeSheet.value?.rows ?? [])
 const rowTotal = computed(() => (activeSheet.value ? sheetRowCount(activeSheet.value) : 0))
 const visibleRows = ref<Record<number, RowData>>({})
+const pendingEdits = new Map<number, RowData>()
+const pendingEditBefore = new Map<number, RowData>()
+const pendingEditTimers = new Map<number, ReturnType<typeof setTimeout>>()
 const pagedMatches = ref<number[] | null>(null)
 const searchScanning = ref(false)
+let visibleLoadToken = 0
 
 function rowAt(index: number): RowData | undefined {
-  if (activeSheet.value?.paged) return visibleRows.value[index]
+  if (activeSheet.value?.paged) {
+    return pendingEdits.get(index) ?? visibleRows.value[index]
+  }
   return allRows.value[index]
 }
 
@@ -160,6 +172,16 @@ watch(
     selectedRowIndex.value = null
     await nextTick()
     selectedRowIndex.value = rowTotal.value > 0 ? 0 : null
+  },
+)
+
+watch(
+  () => activeSheet.value?.id,
+  () => {
+    pendingEdits.clear()
+    pendingEditBefore.clear()
+    for (const timer of pendingEditTimers.values()) clearTimeout(timer)
+    pendingEditTimers.clear()
   },
 )
 
@@ -359,7 +381,7 @@ watch(
     const token = ++searchToken
     searchScanning.value = true
     const matches: number[] = []
-    await scanRows(sheet.id, sheet.rowCount ?? 0, (index, row) => {
+    await scanLogicalRows(sheet.id, sheet.rowCount ?? 0, (index, row) => {
       if (token !== searchToken) return false
       if (
         rowMatchesFilters(
@@ -400,15 +422,17 @@ watch(
   async () => {
     const sheet = activeSheet.value
     const indexes = paginatedIndices.value
+    const token = ++visibleLoadToken
     if (!sheet?.paged || indexes.length === 0) {
       visibleRows.value = {}
       return
     }
     const start = indexes[0]
-    const rows = await readRange(sheet.id, start, indexes[indexes.length - 1] - start + 1)
+    const rows = await readLogicalRange(sheet.id, start, indexes[indexes.length - 1] - start + 1)
+    if (token !== visibleLoadToken) return
     const next: Record<number, RowData> = {}
     indexes.forEach((index) => {
-      next[index] = rows[index - start] ?? {}
+      next[index] = pendingEdits.get(index) ?? rows[index - start] ?? {}
     })
     visibleRows.value = next
   },
@@ -457,68 +481,155 @@ function sameCell(left: CellValue, right: CellValue): boolean {
 
 async function saveCell(rowIndex: number, columnKey: string, value: CellValue) {
   if (!activeSheet.value) return
+  if (activeSheet.value.paged && rowAt(rowIndex) == null) return
   if (sameCell(rowAt(rowIndex)?.[columnKey] ?? null, value)) return
   const next = { ...(rowAt(rowIndex) ?? {}), [columnKey]: value }
-  if (activeSheet.value.paged) visibleRows.value = { ...visibleRows.value, [rowIndex]: next }
   await handleUpdateRow(rowIndex, next)
 }
 
 // Form Handlers: Tạo, Sửa, Xóa từng dòng
-async function handleCreateRow(newRowData: RowData) {
+function emptyRow(): RowData {
+  const row: RowData = {}
+  for (const header of headers.value) row[header.key] = header.dataType === 'boolean' ? false : null
+  return row
+}
+
+async function flushAllPagedEdits() {
+  for (const timer of pendingEditTimers.values()) clearTimeout(timer)
+  pendingEditTimers.clear()
+  const sheetId = activeSheet.value?.id
+  if (!sheetId) return
+  for (const index of [...pendingEdits.keys()]) {
+    await flushPagedEdit(sheetId, index)
+  }
+}
+
+async function handleCreateRow(
+  newRowData: RowData,
+  placement: 'after' | 'end' = 'end',
+  anchor: number | null = selectedRowIndex.value,
+  kind: 'copy' | 'blank' = 'copy',
+) {
   if (!activeSheet.value) return
+  await flushAllPagedEdits()
   const sheetId = activeSheet.value.id
+  const afterSelected = placement === 'after' && anchor !== null
+  const insertAt = afterSelected ? anchor + 1 : undefined
+  const row = kind === 'blank' ? emptyRow() : { ...newRowData }
 
-  await workbookStore.addRow(sheetId, newRowData)
-  const newIndex = sheetRowCount(activeSheet.value) - 1
+  await workbookStore.addRow(sheetId, row, insertAt)
+  const newIndex = insertAt ?? sheetRowCount(activeSheet.value) - 1
   selectedRowIndex.value = newIndex
-
-  const newPage = Math.ceil(sheetRowCount(activeSheet.value) / appConfigStore.rowsPerPage)
-  appConfigStore.setPage(newPage)
+  appConfigStore.setPage(Math.floor(newIndex / appConfigStore.rowsPerPage) + 1)
+  await nextTick()
+  document.querySelector('tr.row-active')?.scrollIntoView({ block: 'nearest' })
 
   pushHistory({
     type: 'ADD_ROW',
     description: `Tạo dòng mới #${newIndex + 1}`,
     sheetId,
     before: {},
-    after: { rows: [newRowData] },
+    after: { rows: [row] },
   })
 
+  const afterLabel = anchor === null ? '' : ` sau dòng #${anchor + 1}`
   appConfigStore.addToast({
     type: 'success',
-    message: `Đã tạo thành công dòng #${newIndex + 1}!`,
+    message: kind === 'copy'
+      ? `Đã sao chép dữ liệu thành dòng #${newIndex + 1}${afterLabel}.`
+      : `Đã thêm dòng trống #${newIndex + 1}${afterSelected ? afterLabel : ' ở cuối bảng'}.`,
   })
 }
 
-let debouncedHistoryTimer: ReturnType<typeof setTimeout> | null = null
-let pendingEditBefore: RowData[] | null = null
+function handleCommitFreshRow() {
+  if (!activeSheet.value || selectedRowIndex.value === null) return
+  workbookStore.commitFreshRow(activeSheet.value.id, selectedRowIndex.value)
+  appConfigStore.addToast({
+    type: 'success',
+    message: `Đã lưu dòng #${selectedRowIndex.value + 1}.`,
+  })
+}
+
+const memoryEditBefore = new Map<number, RowData>()
+const memoryEditTimers = new Map<number, ReturnType<typeof setTimeout>>()
+
+function schedulePagedEdit(sheetId: string, rowIndex: number, updatedData: RowData) {
+  if (!pendingEditBefore.has(rowIndex)) {
+    const current = pendingEdits.get(rowIndex) ?? visibleRows.value[rowIndex] ?? {}
+    pendingEditBefore.set(rowIndex, JSON.parse(JSON.stringify(current)) as RowData)
+  }
+  pendingEdits.set(rowIndex, updatedData)
+  visibleRows.value = { ...visibleRows.value, [rowIndex]: updatedData }
+
+  const existing = pendingEditTimers.get(rowIndex)
+  if (existing) clearTimeout(existing)
+  pendingEditTimers.set(
+    rowIndex,
+    setTimeout(() => {
+      void flushPagedEdit(sheetId, rowIndex)
+    }, 180),
+  )
+}
+
+async function flushPagedEdit(sheetId: string, rowIndex: number) {
+  pendingEditTimers.delete(rowIndex)
+  const data = pendingEdits.get(rowIndex)
+  const before = pendingEditBefore.get(rowIndex)
+  if (!data) return
+  await workbookStore.replaceRow(sheetId, rowIndex, data)
+  if (pendingEdits.get(rowIndex) !== data) return
+  pendingEdits.delete(rowIndex)
+  pendingEditBefore.delete(rowIndex)
+  if (!before) return
+  pushHistory({
+    type: 'EDIT_CELL',
+    description: `Sửa dòng #${rowIndex + 1}`,
+    sheetId,
+    rowIndex,
+    before: { rows: [before] },
+    after: { rows: [JSON.parse(JSON.stringify(data)) as RowData] },
+  })
+}
+
+function scheduleMemoryEdit(sheetId: string, rowIndex: number, updatedData: RowData) {
+  if (!memoryEditBefore.has(rowIndex)) {
+    memoryEditBefore.set(rowIndex, JSON.parse(JSON.stringify(rowAt(rowIndex) ?? {})) as RowData)
+  }
+  const existing = memoryEditTimers.get(rowIndex)
+  if (existing) clearTimeout(existing)
+  memoryEditTimers.set(
+    rowIndex,
+    setTimeout(() => {
+      memoryEditTimers.delete(rowIndex)
+      const before = memoryEditBefore.get(rowIndex)
+      memoryEditBefore.delete(rowIndex)
+      if (!before) return
+      pushHistory({
+        type: 'EDIT_CELL',
+        description: `Sửa dòng #${rowIndex + 1}`,
+        sheetId,
+        rowIndex,
+        before: { rows: [before] },
+        after: { rows: [JSON.parse(JSON.stringify(updatedData)) as RowData] },
+      })
+    }, 400),
+  )
+}
 
 async function handleUpdateRow(rowIndex: number, updatedData: RowData) {
   if (!activeSheet.value || rowIndex < 0 || rowIndex >= rowTotal.value) return
   const sheetId = activeSheet.value.id
-  if (!pendingEditBefore) {
-    pendingEditBefore = JSON.parse(JSON.stringify(activeSheet.value.rows)) as RowData[]
+  if (activeSheet.value.paged) {
+    schedulePagedEdit(sheetId, rowIndex, updatedData)
+    return
   }
-
+  scheduleMemoryEdit(sheetId, rowIndex, updatedData)
   await workbookStore.replaceRow(sheetId, rowIndex, updatedData)
-
-  if (debouncedHistoryTimer) clearTimeout(debouncedHistoryTimer)
-  debouncedHistoryTimer = setTimeout(() => {
-    const before = pendingEditBefore
-    pendingEditBefore = null
-    const after = JSON.parse(JSON.stringify(activeSheet.value?.rows ?? [])) as RowData[]
-    if (!before) return
-    pushHistory({
-      type: 'EDIT_CELL',
-      description: `Sửa dòng #${rowIndex + 1}`,
-      sheetId,
-      before: { rows: before },
-      after: { rows: after },
-    })
-  }, 1000)
 }
 
 async function handleDeleteRow(rowIndex: number) {
   if (!activeSheet.value || rowIndex < 0 || rowIndex >= rowTotal.value) return
+  await flushAllPagedEdits()
   const sheetId = activeSheet.value.id
   const oldRow = { ...(rowAt(rowIndex) ?? {}) }
 
@@ -663,6 +774,8 @@ function onHeaderDelete(key: string) {
 
 const draggingHeaderKey = ref<string | null>(null)
 const dropHeaderKey = ref<string | null>(null)
+const draggingRowIndex = ref<number | null>(null)
+const dropRowIndex = ref<number | null>(null)
 
 watch(
   () => headers.value.map((header) => header.key).join('|'),
@@ -696,6 +809,66 @@ function onHeaderDrop(targetKey: string) {
 function onHeaderDragEnd() {
   draggingHeaderKey.value = null
   dropHeaderKey.value = null
+}
+
+function shiftedIndex(index: number, from: number, to: number): number {
+  if (index === from) return to
+  if (from < to && index > from && index <= to) return index - 1
+  if (to < from && index >= to && index < from) return index + 1
+  return index
+}
+
+function onRowDragStart(index: number, event: DragEvent) {
+  draggingRowIndex.value = index
+  dropRowIndex.value = null
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', String(index))
+  }
+}
+
+function onRowDragOver(index: number) {
+  if (draggingRowIndex.value === null || draggingRowIndex.value === index) {
+    dropRowIndex.value = null
+    return
+  }
+  dropRowIndex.value = index
+}
+
+function onRowDragEnd() {
+  draggingRowIndex.value = null
+  dropRowIndex.value = null
+}
+
+async function onRowDrop(targetIndex: number) {
+  const from = draggingRowIndex.value
+  draggingRowIndex.value = null
+  dropRowIndex.value = null
+  const sheet = activeSheet.value
+  if (from === null || from === targetIndex || !sheet) return
+  await flushAllPagedEdits()
+  await workbookStore.moveRow(sheet.id, from, targetIndex)
+  if (selectedRowIndex.value !== null) {
+    selectedRowIndex.value = shiftedIndex(selectedRowIndex.value, from, targetIndex)
+  }
+  selectionStore.selectedRowIndexes = selectionStore.selectedRowIndexes.map((index) =>
+    shiftedIndex(index, from, targetIndex),
+  )
+  if (selectionStore.editingCell) {
+    selectionStore.editingCell = {
+      ...selectionStore.editingCell,
+      rowIndex: shiftedIndex(selectionStore.editingCell.rowIndex, from, targetIndex),
+    }
+  }
+  pushHistory({
+    type: 'MOVE_ROW',
+    description: `Sắp xếp dòng #${from + 1} sang vị trí #${targetIndex + 1}`,
+    sheetId: sheet.id,
+    before: {},
+    after: {},
+    rowIndex: from,
+    toIndex: targetIndex,
+  })
 }
 
 function columnSum(header: ColumnHeader): string {
@@ -855,7 +1028,13 @@ function addNamedColumn() {
         :data-revision="workbookStore.dataRevision"
         :total-rows="rowTotal"
         :table-hidden="!showTableList"
+        :row-is-new="
+          selectedRowIndex !== null &&
+          !!activeSheet &&
+          workbookStore.isFreshRow(activeSheet.id, selectedRowIndex)
+        "
         @create="handleCreateRow"
+        @commit="handleCommitFreshRow"
         @edit-columns="showColumnEditor = true"
         @update="handleUpdateRow"
         @delete="handleDeleteRow"
@@ -1096,12 +1275,27 @@ function addNamedColumn() {
               :class="{
                 'row-active font-medium': selectedRowIndex === realIdx,
                 'row-checked': selectionStore.isRowSelected(realIdx),
+                'row-fresh': !!activeSheet && workbookStore.isFreshRow(activeSheet.id, realIdx),
+                'row-drop': dropRowIndex === realIdx,
               }"
               @click="selectRowForEdit(realIdx)"
+              @dragover.prevent="onRowDragOver(realIdx)"
+              @drop.prevent="onRowDrop(realIdx)"
             >
               <!-- Checkbox -->
               <td class="col-check border-r border-b border-base-300" @click.stop>
-                <div class="cell-center">
+                <div class="cell-center gap-0.5">
+                  <button
+                    type="button"
+                    class="row-grip"
+                    draggable="true"
+                    title="Kéo để sắp xếp dòng"
+                    aria-label="Kéo để sắp xếp dòng"
+                    @dragstart.stop="onRowDragStart(realIdx, $event)"
+                    @dragend.stop="onRowDragEnd"
+                  >
+                    <GripVertical class="w-3 h-3" />
+                  </button>
                   <input
                     type="checkbox"
                     class="checkbox checkbox-xs checkbox-primary"

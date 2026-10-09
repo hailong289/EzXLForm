@@ -10,6 +10,7 @@ import FindReplaceModal from '@/components/modals/FindReplaceModal.vue'
 import ImportOptionsModal from '@/components/modals/ImportOptionsModal.vue'
 import ToastContainer from '@/components/common/ToastContainer.vue'
 import ProgressTaskDock from '@/components/common/ProgressTaskDock.vue'
+import IntroPage from '@/components/layout/IntroPage.vue'
 import { useWorkbookStore } from '@/stores/workbookStore'
 import { useAppConfigStore } from '@/stores/appConfigStore'
 import { useProgressTaskStore } from '@/stores/progressTaskStore'
@@ -54,6 +55,10 @@ async function flushCurrentSession() {
   }
 }
 
+function onPageHide() {
+  void flushCurrentSession()
+}
+
 watch(
   () => workbookStore.workbook,
   () => {
@@ -64,12 +69,20 @@ watch(
   { deep: true },
 )
 
+watch(
+  () => workbookStore.dataRevision,
+  () => {
+    if (workbookStore.workbook) debouncedSaveSqlite()
+  },
+)
+
 // Modal states
 const showFindReplace = ref(false)
 const showImportOptions = ref(false)
 const pendingFile = ref<File | null>(null)
 const isDraggingOver = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const showIntro = ref(true)
 
 // ─── File Handling ──────────────────────────────────────────────────────────
 
@@ -337,6 +350,11 @@ function handleKeydown(e: KeyboardEvent) {
 async function handleGoHome() {
   await flushCurrentSession()
   workbookStore.resetWorkbook()
+  showIntro.value = true
+}
+
+function openWebEditor() {
+  showIntro.value = false
 }
 
 async function handleSwitchSession(id: string) {
@@ -371,11 +389,25 @@ function handleHistoryUndo() {
   const sheet = workbookStore.workbook.sheets.find((s) => s.id === entry.sheetId)
   if (!sheet) return
 
-  // Khôi phục trạng thái trước đó
-  if (entry.before.rows) sheet.rows = JSON.parse(JSON.stringify(entry.before.rows))
+  if (entry.type === 'MOVE_ROW' && typeof entry.rowIndex === 'number' && typeof entry.toIndex === 'number') {
+    void workbookStore.moveRow(sheet.id, entry.toIndex, entry.rowIndex)
+    appConfigStore.addToast({ type: 'info', message: `Đã hoàn tác: ${entry.description}` })
+    return
+  }
+
+  if (typeof entry.rowIndex === 'number' && entry.before.rows?.[0]) {
+    void workbookStore.replaceRow(sheet.id, entry.rowIndex, entry.before.rows[0])
+    appConfigStore.addToast({
+      type: 'info',
+      message: `Đã hoàn tác: ${entry.description}`,
+    })
+    return
+  }
+
+  if (entry.before.rows && !sheet.paged) sheet.rows = JSON.parse(JSON.stringify(entry.before.rows))
   if (entry.before.headers) sheet.headers = JSON.parse(JSON.stringify(entry.before.headers))
   if (entry.before.name) sheet.name = entry.before.name
-  if (entry.before.rows) syncBodyRows(sheet)
+  if (entry.before.rows && !sheet.paged) syncBodyRows(sheet)
   workbookStore.dataRevision += 1
 
   appConfigStore.addToast({
@@ -390,8 +422,22 @@ function handleHistoryRedo() {
   const sheet = workbookStore.workbook.sheets.find((s) => s.id === entry.sheetId)
   if (!sheet) return
 
-  // Áp dụng lại trạng thái
-  if (entry.after.rows) {
+  if (entry.type === 'MOVE_ROW' && typeof entry.rowIndex === 'number' && typeof entry.toIndex === 'number') {
+    void workbookStore.moveRow(sheet.id, entry.rowIndex, entry.toIndex)
+    appConfigStore.addToast({ type: 'info', message: `Đã làm lại: ${entry.description}` })
+    return
+  }
+
+  if (typeof entry.rowIndex === 'number' && entry.after.rows?.[0]) {
+    void workbookStore.replaceRow(sheet.id, entry.rowIndex, entry.after.rows[0])
+    appConfigStore.addToast({
+      type: 'info',
+      message: `Đã làm lại: ${entry.description}`,
+    })
+    return
+  }
+
+  if (entry.after.rows && !sheet.paged) {
     sheet.rows = JSON.parse(JSON.stringify(entry.after.rows))
     syncBodyRows(sheet)
   }
@@ -406,28 +452,29 @@ function handleHistoryRedo() {
 }
 
 // Lifecycle
-onMounted(async () => {
-  loadSavedTheme()
-  window.addEventListener('keydown', handleKeydown)
+  onMounted(async () => {
+    loadSavedTheme()
+    window.addEventListener('keydown', handleKeydown)
+    window.addEventListener('pagehide', onPageHide)
 
-  // Tự động phục hồi phiên làm việc từ SQLite khi reload trang
-  try {
-    const savedSession = await loadSessionFromSqlite()
-    if (savedSession) {
-      workbookStore.setWorkbook(savedSession)
-      appConfigStore.addToast({
-        type: 'info',
-        message: `Đã khôi phục dữ liệu từ SQLite (${savedSession.meta.fileName})`,
-      })
+    try {
+      const savedSession = await loadSessionFromSqlite()
+      if (savedSession) {
+        await workbookStore.setWorkbook(savedSession)
+        appConfigStore.addToast({
+          type: 'info',
+          message: `Đã khôi phục dữ liệu từ SQLite (${savedSession.meta.fileName})`,
+        })
+      }
+    } catch (err) {
+      console.error('Không thể tải phiên SQLite:', err)
     }
-  } catch (err) {
-    console.error('Không thể tải phiên SQLite:', err)
-  }
-})
+  })
 
-onUnmounted(() => {
-  window.removeEventListener('keydown', handleKeydown)
-})
+  onUnmounted(() => {
+    window.removeEventListener('keydown', handleKeydown)
+    window.removeEventListener('pagehide', onPageHide)
+  })
 </script>
 
 <template>
@@ -452,9 +499,11 @@ onUnmounted(() => {
 
     <!-- Main Content Area -->
     <main class="flex-1 overflow-hidden relative">
+      <IntroPage v-if="showIntro && !workbookStore.workbook" @open-web="openWebEditor" />
+
       <!-- 1. Landing View khi chưa mở file -->
       <div
-        v-if="!workbookStore.workbook"
+        v-else-if="!workbookStore.workbook"
         class="flex flex-col items-center justify-center h-full p-6 text-center"
         @dragover="handleDragOver"
         @dragleave="handleDragLeave"

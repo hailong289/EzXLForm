@@ -21,11 +21,12 @@ import {
   moveGridColumn,
   removeGridColumn,
   insertBodyRow,
+  moveBodyRow,
   removeBodyRows,
   writeBodyRow,
   writeHeaderLabel,
 } from '@/utils/sheetGrid'
-import { deleteRowKey, getRow, putRow, readRange, saveSheetMeta, writeRows } from '@/composables/rowPageStore'
+import { clearAllSheetOrders, deleteRowKey, getRow, hasSheetOrder, loadSheetMeta, moveLogicalRow, persistSheetOrder, physicalOf, placeInsertedRow, putRow, readLogicalRange, removeLogicalRow, restoreSheetOrders, saveSheetMeta, sheetOrderLength, writeRows } from '@/composables/rowPageStore'
 import { buildFindRegex, isBlankCell } from '@/utils/rowFilter'
 
 // State Interface
@@ -37,6 +38,8 @@ interface WorkbookState {
   isDirty: boolean
   /** Tăng mỗi lần sửa dòng để bảng và preview vẽ lại ngay */
   dataRevision: number
+  /** Dòng vừa thêm, chưa bấm lưu. Khóa theo sheet id. */
+  freshRows: Record<string, number[]>
 }
 
 // Helper
@@ -98,8 +101,40 @@ function replaceCellText(cell: string, regex: RegExp, replaceText: string): { te
   return { text, count }
 }
 
+function noteFreshMove(map: Record<string, number[]>, sheetId: string, from: number, to: number): Record<string, number[]> {
+  const list = map[sheetId]
+  if (!list?.length || from === to) return map
+  const next = list.map((index) => {
+    if (index === from) return to
+    if (from < to && index > from && index <= to) return index - 1
+    if (to < from && index >= to && index < from) return index + 1
+    return index
+  })
+  return { ...map, [sheetId]: next }
+}
+
+function noteFreshDelete(map: Record<string, number[]>, sheetId: string, indexes: number[]): Record<string, number[]> {
+  let list = map[sheetId] ?? []
+  for (const index of [...indexes].sort((a, b) => b - a)) {
+    list = list.filter((item) => item !== index).map((item) => (item > index ? item - 1 : item))
+  }
+  return { ...map, [sheetId]: list }
+}
+
 function yieldTurn(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+let rowMutationQueue: Promise<void> = Promise.resolve()
+
+/** Ghi IndexedDB lần lượt để lần gõ sau không bị lần gõ trước đè lên. */
+function enqueueRowMutation(task: () => Promise<void>): Promise<void> {
+  const run = rowMutationQueue.then(task, task)
+  rowMutationQueue = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  return run
 }
 
 // Store Definition
@@ -110,6 +145,7 @@ export const useWorkbookStore = defineStore('workbook', {
     isLoading: false,
     isDirty: false,
     dataRevision: 0,
+    freshRows: {},
   }),
 
   getters: {
@@ -129,6 +165,9 @@ export const useWorkbookStore = defineStore('workbook', {
     },
 
     /** Index cua sheet dang active trong mang sheets */
+    isFreshRow: (state) => (sheetId: string, index: number) =>
+      (state.freshRows[sheetId] ?? []).includes(index),
+
     activeSheetIndex(state): number {
       if (!state.workbook) return -1
       return state.workbook.sheets.findIndex(
@@ -141,7 +180,7 @@ export const useWorkbookStore = defineStore('workbook', {
     // Workbook-level
 
     /** Gan workbook moi vao store */
-    setWorkbook(wb: WorkbookData): void {
+    async setWorkbook(wb: WorkbookData): Promise<void> {
       for (const sheet of wb.sheets) {
         if (sheet.paged) continue
         const broken = sheet.headers.some((header) => String(header.label).includes('[object Object]'))
@@ -158,6 +197,15 @@ export const useWorkbookStore = defineStore('workbook', {
             }
           })
         }
+      }
+      clearAllSheetOrders()
+      const pagedIds = wb.sheets.filter((sheet) => sheet.paged).map((sheet) => sheet.id)
+      await restoreSheetOrders(pagedIds)
+      for (const sheet of wb.sheets) {
+        if (!sheet.paged) continue
+        const meta = await loadSheetMeta(sheet.id)
+        const stored = Math.max(meta?.rowCount ?? 0, sheetOrderLength(sheet.id))
+        if (stored > (sheet.rowCount ?? 0)) sheet.rowCount = stored
       }
       this.workbook = wb
       this.isDirty = false
@@ -191,9 +239,18 @@ export const useWorkbookStore = defineStore('workbook', {
 
     /** Reset ve trang thai ban dau */
     resetWorkbook(): void {
+      clearAllSheetOrders()
       this.workbook = null
       this.isLoading = false
       this.isDirty = false
+      this.freshRows = {}
+    },
+
+    commitFreshRow(sheetId: string, index: number): void {
+      this.freshRows = {
+        ...this.freshRows,
+        [sheetId]: (this.freshRows[sheetId] ?? []).filter((item) => item !== index),
+      }
     },
 
     // Row Operations
@@ -206,14 +263,18 @@ export const useWorkbookStore = defineStore('workbook', {
       if (!this.workbook) return
       const sheet = getSheetOrThrow(this.workbook, sheetId)
       if (sheet.paged) {
-        const index = sheet.rowCount ?? 0
-        await putRow(sheet.id, index, { ...rowData })
-        sheet.rowCount = index + 1
+        return enqueueRowMutation(async () => {
+        const count = sheet.rowCount ?? 0
+        const at = position === undefined || position >= count ? count : Math.max(0, position)
+        const physical = placeInsertedRow(sheet.id, at, count)
+        await putRow(sheet.id, physical, { ...rowData })
+        sheet.rowCount = count + 1
         applySumDelta(sheet, null, rowData)
         await rememberPagedSheet(sheet)
+        await persistSheetOrder(sheet.id)
         this.isDirty = true
         this.dataRevision += 1
-        return
+        })
       }
 
       const at = position === undefined || position >= sheet.rows.length
@@ -227,6 +288,29 @@ export const useWorkbookStore = defineStore('workbook', {
       this.dataRevision += 1
     },
 
+    /** Đổi vị trí một dòng. File lớn chỉ đổi thứ tự hiển thị, không ghi lại các dòng khác. */
+    async moveRow(sheetId: string, from: number, to: number): Promise<void> {
+      if (!this.workbook || from === to) return
+      const sheet = getSheetOrThrow(this.workbook, sheetId)
+      const count = sheet.paged ? sheet.rowCount ?? 0 : sheet.rows.length
+      if (from < 0 || to < 0 || from >= count || to >= count) return
+      if (sheet.paged) {
+        return enqueueRowMutation(async () => {
+          if (!moveLogicalRow(sheet.id, from, to, count)) return
+          await persistSheetOrder(sheet.id)
+          this.freshRows = noteFreshMove(this.freshRows, sheet.id, from, to)
+          this.isDirty = true
+          this.dataRevision += 1
+        })
+      }
+      const [row] = sheet.rows.splice(from, 1)
+      sheet.rows.splice(to, 0, row)
+      moveBodyRow(sheet, from, to)
+      this.freshRows = noteFreshMove(this.freshRows, sheet.id, from, to)
+      this.isDirty = true
+      this.dataRevision += 1
+    },
+
     /**
      * Xoa nhieu dong theo indexes.
      * Tu dong sort descending de tranh index bi lech khi xoa.
@@ -235,23 +319,39 @@ export const useWorkbookStore = defineStore('workbook', {
       if (!this.workbook) return
       const sheet = getSheetOrThrow(this.workbook, sheetId)
       if (sheet.paged) {
-        const sorted = [...rowIndexes].sort((a, b) => b - a)
-        for (const idx of sorted) {
-          const last = (sheet.rowCount ?? 0) - 1
-          if (idx < 0 || idx > last) continue
-          const removed = await getRow(sheet.id, idx)
-          if (idx !== last) {
-            const tail = (await getRow(sheet.id, last)) ?? {}
-            await putRow(sheet.id, idx, tail)
+        return enqueueRowMutation(async () => {
+          const sorted = [...rowIndexes].sort((a, b) => b - a)
+          if (hasSheetOrder(sheet.id)) {
+            for (const idx of sorted) {
+              const physical = removeLogicalRow(sheet.id, idx)
+              if (physical === null) continue
+              const removed = await getRow(sheet.id, physical)
+              await deleteRowKey(sheet.id, physical)
+              sheet.rowCount = Math.max(0, (sheet.rowCount ?? 1) - 1)
+              applySumDelta(sheet, removed, {})
+            }
+            await rememberPagedSheet(sheet)
+            await persistSheetOrder(sheet.id)
+            this.isDirty = true
+            this.dataRevision += 1
+            return
           }
-          await deleteRowKey(sheet.id, last)
-          sheet.rowCount = last
-          applySumDelta(sheet, removed, {})
-        }
-        await rememberPagedSheet(sheet)
-        this.isDirty = true
-        this.dataRevision += 1
-        return
+          for (const idx of sorted) {
+            const last = (sheet.rowCount ?? 0) - 1
+            if (idx < 0 || idx > last) continue
+            const removed = await getRow(sheet.id, idx)
+            if (idx !== last) {
+              const tail = (await getRow(sheet.id, last)) ?? {}
+              await putRow(sheet.id, idx, tail)
+            }
+            await deleteRowKey(sheet.id, last)
+            sheet.rowCount = last
+            applySumDelta(sheet, removed, {})
+          }
+          await rememberPagedSheet(sheet)
+          this.isDirty = true
+          this.dataRevision += 1
+        })
       }
 
       const sorted = [...rowIndexes].sort((a, b) => b - a)
@@ -263,6 +363,7 @@ export const useWorkbookStore = defineStore('workbook', {
         }
       }
       removeBodyRows(sheet, removed)
+      this.freshRows = noteFreshDelete(this.freshRows, sheetId, removed)
       this.isDirty = true
       this.dataRevision += 1
     },
@@ -279,15 +380,17 @@ export const useWorkbookStore = defineStore('workbook', {
       if (!this.workbook) return
       const sheet = getSheetOrThrow(this.workbook, sheetId)
       if (sheet.paged) {
-        if (rowIndex < 0 || rowIndex >= (sheet.rowCount ?? 0)) return
-        const old = (await getRow(sheet.id, rowIndex)) ?? {}
-        const next = { ...old, [columnKey]: value }
-        await putRow(sheet.id, rowIndex, next)
-        applySumDelta(sheet, old, next)
-        await rememberPagedSheet(sheet)
-        this.isDirty = true
-        this.dataRevision += 1
-        return
+        return enqueueRowMutation(async () => {
+          if (rowIndex < 0 || rowIndex >= (sheet.rowCount ?? 0)) return
+          const physical = physicalOf(sheet.id, rowIndex)
+          const old = (await getRow(sheet.id, physical)) ?? {}
+          const next = { ...old, [columnKey]: value }
+          await putRow(sheet.id, physical, next)
+          applySumDelta(sheet, old, next)
+          await rememberPagedSheet(sheet)
+          this.isDirty = true
+          this.dataRevision += 1
+        })
       }
       if (rowIndex < 0 || rowIndex >= sheet.rows.length) return
 
@@ -300,25 +403,28 @@ export const useWorkbookStore = defineStore('workbook', {
 
     /** Thay cả dòng — splice để bảng và preview thấy ngay khi gõ form */
     async replaceRow(sheetId: string, rowIndex: number, data: RowData): Promise<void> {
-      if (!this.workbook) return
-      const sheet = getSheetOrThrow(this.workbook, sheetId)
-      if (sheet.paged) {
-        if (rowIndex < 0 || rowIndex >= (sheet.rowCount ?? 0)) return
-        const old = (await getRow(sheet.id, rowIndex)) ?? {}
+      return enqueueRowMutation(async () => {
+        if (!this.workbook) return
+        const sheet = getSheetOrThrow(this.workbook, sheetId)
+        if (sheet.paged) {
+          if (rowIndex < 0 || rowIndex >= (sheet.rowCount ?? 0)) return
+          const physical = physicalOf(sheet.id, rowIndex)
+          const old = (await getRow(sheet.id, physical)) ?? {}
+          const next = { ...data }
+          await putRow(sheet.id, physical, next)
+          applySumDelta(sheet, old, next)
+          await rememberPagedSheet(sheet)
+          this.isDirty = true
+          this.dataRevision += 1
+          return
+        }
+        if (rowIndex < 0 || rowIndex >= sheet.rows.length) return
         const next = { ...data }
-        await putRow(sheet.id, rowIndex, next)
-        applySumDelta(sheet, old, next)
-        await rememberPagedSheet(sheet)
+        sheet.rows.splice(rowIndex, 1, next)
+        writeBodyRow(sheet, rowIndex, next)
         this.isDirty = true
         this.dataRevision += 1
-        return
-      }
-      if (rowIndex < 0 || rowIndex >= sheet.rows.length) return
-      const next = { ...data }
-      sheet.rows.splice(rowIndex, 1, next)
-      writeBodyRow(sheet, rowIndex, next)
-      this.isDirty = true
-      this.dataRevision += 1
+      })
     },
 
     // Column (Header) Operations
@@ -602,7 +708,7 @@ export const useWorkbookStore = defineStore('workbook', {
       for (let start = 0; start < rowCount && !stopped; start += REPLACE_CHUNK) {
         if (control && !(await control.checkpoint())) break
         const count = Math.min(REPLACE_CHUNK, rowCount - start)
-        const rows = await readRange(sheet.id, start, count)
+        const rows = await readLogicalRange(sheet.id, start, count)
         for (let offset = 0; offset < rows.length; offset++) {
           const row = rows[offset]
           let matched = false
@@ -636,7 +742,7 @@ export const useWorkbookStore = defineStore('workbook', {
           if (changed) {
             changedRows += 1
             applySumDelta(sheet, row, next)
-            dirty.push({ index: start + offset, row: next })
+            dirty.push({ index: physicalOf(sheet.id, start + offset), row: next })
           }
         }
         if (dirty.length > 0) {

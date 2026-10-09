@@ -40,8 +40,7 @@ npm run tauri build    # Build production .exe
 
 ## CI/CD
 
-- **Web:** mỗi push lên `main`/`master` và mỗi pull request chạy `npm run build`. Deploy Vercel đi theo kết nối GitHub của project, không deploy từ Actions.
-- **Desktop:** cùng các lần đó build bộ cài Windows, Linux và macOS, rồi đẩy file lên artifact. Tag dạng `{năm}.{tháng}.{phiên bản}` (ví dụ `2026.10.1`) mới tạo GitHub Release, và phiên bản trong app lấy từ tag đó.
+- **Desktop:** mỗi push lên `main`/`master` và mỗi pull request build bộ cài Windows, Linux và macOS, rồi đẩy file lên artifact. Tag dạng `{năm}.{tháng}.{phiên bản}` (ví dụ `2026.10.1`) tạo GitHub Release, và phiên bản trong app lấy từ tag đó.
 
 ## Cấu trúc Project
 

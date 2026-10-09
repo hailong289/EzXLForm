@@ -82,7 +82,7 @@ export type HistoryActionType =
   | 'ADD_SHEET'
   | 'DELETE_SHEET'
   | 'RENAME_SHEET'
-  | 'REORDER_SHEET'
+  | 'MOVE_ROW'
 
 export interface HistoryEntry {
   id: string
@@ -92,6 +92,10 @@ export interface HistoryEntry {
   sheetId: string
   before: Partial<SheetData>
   after: Partial<SheetData>
+  /** Dòng IndexedDB bị sửa, khi sheet đang chia trang */
+  rowIndex?: number
+  /** Vị trí đích khi kéo thả sắp xếp hàng */
+  toIndex?: number
 }
 
 // Theme & Settings

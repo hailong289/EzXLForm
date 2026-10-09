@@ -13,6 +13,7 @@ import {
   Type,
   CheckSquare,
   CheckCircle2,
+  Copy,
   Columns3,
   PanelLeftClose,
   PanelRightOpen,
@@ -29,10 +30,12 @@ const props = defineProps<{
   totalRows: number
   sheetId?: string
   tableHidden?: boolean
+  rowIsNew?: boolean
 }>()
 
 const emit = defineEmits<{
-  create: [data: RowData]
+  create: [data: RowData, placement: 'after' | 'end', anchor: number | null, kind: 'copy' | 'blank']
+  commit: []
   update: [rowIndex: number, data: RowData]
   delete: [rowIndex: number]
   clear: []
@@ -47,13 +50,16 @@ const emit = defineEmits<{
 
 // Dữ liệu trong form
 const formData = ref<Record<string, string>>({})
-let formWrite = 0
 const showDeleteConfirm = ref(false)
 const jumpInput = ref<number | ''>('')
 const isRealtimeSaved = ref(false)
-let saveIndicatorTimeout: any = null
+let saveIndicatorTimeout: ReturnType<typeof setTimeout> | null = null
 
-function syncFormFromSelection() {
+const formFocused = ref(false)
+
+function syncFormFromSelection(force = false) {
+  if (!force && formFocused.value) return
+  if (props.selectedRowIndex !== null && props.selectedRow == null) return
   const newRow = props.selectedRow
   if (newRow && props.selectedRowIndex !== null) {
     const data: Record<string, string> = {}
@@ -69,11 +75,19 @@ function syncFormFromSelection() {
   }
 }
 
-// Chỉ nạp lại form khi đổi dòng (click / trước-sau), không nạp lại trên mỗi phím
 watch(
   () => [props.sheetId, props.selectedRowIndex] as const,
   () => {
-    syncFormFromSelection()
+    formFocused.value = false
+    syncFormFromSelection(true)
+  },
+  { immediate: true },
+)
+
+watch(
+  () => props.selectedRow,
+  () => {
+    syncFormFromSelection(false)
   },
   { immediate: true },
 )
@@ -81,11 +95,7 @@ watch(
 watch(
   () => props.dataRevision,
   () => {
-    if (formWrite > 0) {
-      formWrite = 0
-      return
-    }
-    syncFormFromSelection()
+    syncFormFromSelection(false)
   },
 )
 
@@ -191,10 +201,10 @@ function onTextAreaInput(key: string, event: Event) {
 }
 
 function onFieldInput(key: string, raw: string) {
+  formFocused.value = true
   formData.value = { ...formData.value, [key]: raw }
-  if (props.selectedRowIndex === null) return
+  if (props.selectedRowIndex === null || props.selectedRow == null) return
 
-  formWrite += 1
   emit('update', props.selectedRowIndex, parseFormData())
 
   isRealtimeSaved.value = true
@@ -204,9 +214,14 @@ function onFieldInput(key: string, raw: string) {
   }, 1500)
 }
 
-function handleCreate() {
-  const rowData = parseFormData()
-  emit('create', rowData)
+function handleCreate(placement: 'after' | 'end' = 'end', kind: 'copy' | 'blank' = 'copy') {
+  if (kind === 'copy' && props.selectedRowIndex !== null && props.selectedRow == null) return
+  const where = placement === 'after' && props.selectedRowIndex !== null ? 'after' : 'end'
+  emit('create', parseFormData(), where, props.selectedRowIndex, kind)
+}
+
+function handleCommit() {
+  emit('commit')
 }
 
 function handleDeleteClick() {
@@ -270,6 +285,14 @@ function focusNeighbor(current: HTMLElement, direction: 'left' | 'right' | 'up' 
       /* number input không đặt được con trỏ */
     }
   }
+}
+
+function onFormFocusOut(event: FocusEvent) {
+  const next = event.relatedTarget
+  const root = event.currentTarget
+  if (next instanceof Node && root instanceof Node && root.contains(next)) return
+  formFocused.value = false
+  syncFormFromSelection(false)
 }
 
 function onFormKeydown(event: KeyboardEvent) {
@@ -368,7 +391,12 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex flex-col h-full bg-base-100 select-none overflow-hidden" @keydown="onFormKeydown">
+  <div
+    class="flex flex-col h-full bg-base-100 select-none overflow-hidden"
+    @keydown="onFormKeydown"
+    @focusin="formFocused = true"
+    @focusout="onFormFocusOut"
+  >
     <!-- ── Header Panel Gọn Gàng ───────────────────────────────────────────── -->
     <div class="p-3 bg-base-200/90 border-b border-base-300 flex items-center justify-between gap-3">
       <!-- Title & Mode Badge -->
@@ -602,11 +630,53 @@ onUnmounted(() => {
     <div class="p-3 bg-base-200/90 border-t border-base-300 flex items-center justify-between gap-2 flex-wrap">
       <!-- Nút Tạo dòng mới -->
       <button
+        v-if="props.rowIsNew"
+        type="button"
+        class="btn btn-warning btn-sm gap-1.5 text-xs font-bold"
+        title="Lưu dòng mới và bỏ màu đánh dấu"
+        @click="handleCommit"
+      >
+        <CheckCircle2 class="w-4 h-4" /> Lưu dòng mới
+      </button>
+      <button
+        v-if="isEditMode"
+        type="button"
         class="btn btn-primary btn-sm flex-1 gap-1.5 text-xs font-bold shadow-xs min-w-[140px]"
-        @click="handleCreate"
+        :title="`Sao chép dữ liệu dòng #${(props.selectedRowIndex ?? 0) + 1} thành dòng ngay bên dưới`"
+        :disabled="!props.selectedRow"
+        @click="handleCreate('after', 'copy')"
+      >
+        <Copy class="w-4 h-4" />
+        Sao chép xuống dưới
+      </button>
+      <button
+        v-if="isEditMode"
+        type="button"
+        class="btn btn-secondary btn-sm flex-1 gap-1.5 text-xs font-bold min-w-[140px]"
+        :title="`Thêm một dòng trống ngay sau dòng #${(props.selectedRowIndex ?? 0) + 1}`"
+        @click="handleCreate('after', 'blank')"
       >
         <Plus class="w-4 h-4" />
-        {{ isEditMode ? 'Thêm thành dòng mới' : 'Tạo dòng mới' }}
+        Thêm dòng mới sau #{{ (props.selectedRowIndex ?? 0) + 1 }}
+      </button>
+      <button
+        v-if="!isEditMode"
+        type="button"
+        class="btn btn-primary btn-sm flex-1 gap-1.5 text-xs font-bold shadow-xs min-w-[140px]"
+        title="Thêm dòng đang nhập vào cuối bảng"
+        @click="handleCreate('end', 'copy')"
+      >
+        <Plus class="w-4 h-4" />
+        Tạo dòng mới
+      </button>
+      <button
+        v-if="isEditMode"
+        type="button"
+        class="btn btn-outline btn-sm gap-1 text-xs"
+        title="Thêm một dòng trống ở cuối bảng"
+        @click="handleCreate('end', 'blank')"
+      >
+        <Plus class="w-3.5 h-3.5" /> Thêm ở cuối
       </button>
 
       <!-- Nhóm nút phụ: Xóa & Làm mới -->

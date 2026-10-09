@@ -15,7 +15,7 @@ import { useWorkbookStore } from '@/stores/workbookStore'
 import { useHistory } from '@/composables/useHistory'
 import { useAppConfigStore } from '@/stores/appConfigStore'
 import { useBatchOperations } from '@/composables/useBatchOperations'
-import { getRow } from '@/composables/rowPageStore'
+import { physicalOf, getRow } from '@/composables/rowPageStore'
 import type { ColumnHeader, BatchOperationType } from '@/types/excel'
 
 const props = defineProps<{
@@ -58,7 +58,7 @@ async function executeBatchAction() {
 
   if (workbookStore.activeSheet.paged) {
     for (const index of targetIndexes) {
-      const row = (await getRow(sheetId, index)) ?? {}
+      const row = (await getRow(sheetId, physicalOf(sheetId, index))) ?? {}
       const [next] = applyBatchOperation([row], { ...operation, targetRowIndexes: [0] })
       await workbookStore.replaceRow(sheetId, index, next)
     }
