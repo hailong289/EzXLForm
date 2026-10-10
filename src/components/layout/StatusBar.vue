@@ -34,13 +34,13 @@ const selectedRowCount = computed(() => selectionStore.selectedRowIndexes.length
 /** Tên file */
 const fileName = computed(() => workbookStore.workbook?.meta.fileName ?? '')
 
-/** Trang hiện tại */
-const currentPage = computed(() => appConfigStore.currentPage ?? 1)
-
-/** Tổng số trang */
-const totalPages = computed(() => {
-  if (!totalRows.value || !appConfigStore.rowsPerPage) return 1
-  return Math.max(1, Math.ceil(totalRows.value / appConfigStore.rowsPerPage))
+const windowLabel = computed(() => {
+  const window = appConfigStore.listWindow
+  if (!window || window.total <= 0 || window.to < window.from) return ''
+  const from = window.from.toLocaleString('vi-VN')
+  const to = window.to.toLocaleString('vi-VN')
+  const total = window.total.toLocaleString('vi-VN')
+  return window.filtering ? `Khớp ${from}–${to} / ${total}` : `Dòng ${from}–${to} / ${total}`
 })
 </script>
 
@@ -106,13 +106,7 @@ const totalPages = computed(() => {
       <!-- Divider -->
       <div v-if="activeSheet" class="w-px h-3 bg-base-content opacity-20" />
 
-      <!-- Thông tin phân trang -->
-      <span v-if="activeSheet" class="flex items-center gap-1">
-        <span class="opacity-60">Trang</span>
-        <span class="font-medium">{{ currentPage }}</span>
-        <span class="opacity-60">/</span>
-        <span class="font-medium">{{ totalPages }}</span>
-      </span>
+      <span v-if="windowLabel" class="font-medium">{{ windowLabel }}</span>
     </div>
   </div>
 </template>

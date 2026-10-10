@@ -80,7 +80,7 @@ export function useExcelParser() {
 
       wb.eachSheet((worksheet, sheetId) => {
         const rowCount = worksheet.rowCount
-        const colCount = Math.max(worksheet.columnCount, 1)
+        const colCount = valueColumnCount(worksheet)
         const sourceGrid: CellValue[][] = []
 
         for (let r = 1; r <= rowCount; r++) {
@@ -133,6 +133,30 @@ export function useExcelParser() {
       isLoading.value = false
       importProgress.value = ''
     }
+  }
+
+  /**
+   * Cột cuối cùng có giá trị thật.
+   * Bỏ qua ô chỉ có định dạng: Excel có thể ghi cả dòng tới cột XFC (16.383 cột).
+   */
+  function valueColumnCount(worksheet: ExcelJS.Worksheet): number {
+    let last = 0
+    worksheet.eachRow({ includeEmpty: false }, (row) => {
+      row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+        if (colNumber > last && cellHasValue(cell)) last = colNumber
+      })
+    })
+    return Math.max(last, 1)
+  }
+
+  function cellHasValue(cell: ExcelJS.Cell): boolean {
+    const value = cell.value
+    if (value == null || value === '') return false
+    if (typeof value === 'object' && 'result' in value) {
+      const result = value.result
+      return result != null && result !== ''
+    }
+    return true
   }
 
   function readCellValue(cell: ExcelJS.Cell): CellValue {

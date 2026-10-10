@@ -8,6 +8,7 @@ import type { CellValue, RowData } from '@/types/excel'
 import { formatDateValue } from '@/utils/dateFormat'
 import { readLogicalRange } from '@/composables/rowPageStore'
 import { cellToDisplayString } from '@/utils/sheetGrid'
+import { useVirtualRows } from '@/composables/useVirtualRows'
 
 const workbookStore = useWorkbookStore()
 
@@ -32,35 +33,25 @@ const currentPreviewSheet = computed(() => {
   )
 })
 
-const pagedPreviewRows = ref<RowData[]>([])
+const previewScrollRef = ref<HTMLElement | null>(null)
+const previewRows = ref<Record<number, RowData>>({})
+const VIEW_BUFFER = 80
+let previewToken = 0
+let heldKey = ''
 
-watch(
-  () =>
-    `${currentPreviewSheet.value?.id ?? ''}:${currentPreviewSheet.value?.paged ? 1 : 0}:${workbookStore.dataRevision}`,
-  async () => {
-    const sheet = currentPreviewSheet.value
-    if (!sheet?.paged) {
-      pagedPreviewRows.value = []
-      return
-    }
-    pagedPreviewRows.value = await readLogicalRange(sheet.id, 0, Math.min(200, sheet.rowCount ?? 0))
-  },
-  { immediate: true },
-)
+const columnCount = computed(() => {
+  const sheet = currentPreviewSheet.value
+  if (!sheet) return 0
+  const sourceWidth = sheet.sourceGrid?.reduce((max, row) => Math.max(max, row.length), 0) ?? 0
+  return Math.max(sourceWidth, sheet.headers.length, sheet.paged ? 0 : 1)
+})
 
-const PREVIEW_PAGE_ROWS = 100
-const previewPage = ref(1)
-
-const fullGrid = computed(() => {
+const smallGrid = computed(() => {
   void workbookStore.dataRevision
   const sheet = currentPreviewSheet.value
-  if (!sheet) return [] as CellValue[][]
+  if (!sheet || sheet.paged) return [] as CellValue[][]
   const source = sheet.sourceGrid?.length ? sheet.sourceGrid : null
-  const width = Math.max(
-    source?.reduce((max, row) => Math.max(max, row.length), 0) ?? 0,
-    sheet.headers.length,
-    1,
-  )
+  const width = Math.max(columnCount.value, 1)
   const grid: CellValue[][] = (source ?? []).map((row) => {
     const line = row.slice()
     while (line.length < width) line.push(null)
@@ -68,21 +59,10 @@ const fullGrid = computed(() => {
   })
   const headerAt = Math.min(Math.max(0, sheet.headerRowIndex), Math.max(grid.length - 1, 0))
   while (grid.length <= headerAt) grid.push(Array.from({ length: width }, () => null))
-  if (!grid[headerAt]) grid[headerAt] = []
   while (grid[headerAt].length < width) grid[headerAt].push(null)
   sheet.headers.forEach((header, column) => {
     grid[headerAt][column] = header.label
   })
-  if (sheet.paged) {
-    pagedPreviewRows.value.forEach((row, index) => {
-      const lineIndex = headerAt + 1 + index
-      while (grid.length <= lineIndex) grid.push(Array.from({ length: width }, () => null))
-      sheet.headers.forEach((header, column) => {
-        grid[lineIndex][column] = row[header.key] ?? null
-      })
-    })
-    return grid
-  }
   sheet.rows.forEach((row, index) => {
     const lineIndex = headerAt + 1 + index
     while (grid.length <= lineIndex) grid.push(Array.from({ length: width }, () => null))
@@ -94,24 +74,85 @@ const fullGrid = computed(() => {
   return grid
 })
 
-const previewPageCount = computed(() => Math.max(1, Math.ceil(fullGrid.value.length / PREVIEW_PAGE_ROWS)))
-const pagedGrid = computed(() => {
-  const start = (previewPage.value - 1) * PREVIEW_PAGE_ROWS
-  return fullGrid.value.slice(start, start + PREVIEW_PAGE_ROWS).map((row, offset) => ({
-    index: start + offset,
-    cells: row,
-  }))
+const previewCount = computed(() => {
+  const sheet = currentPreviewSheet.value
+  if (!sheet) return 0
+  if (!sheet.paged) return smallGrid.value.length
+  return sheet.headerRowIndex + 1 + (sheet.rowCount ?? 0)
 })
-const columnCount = computed(() => fullGrid.value.reduce((max, row) => Math.max(max, row.length), 0))
 
-watch(previewPageCount, (count) => {
-  if (previewPage.value > count) previewPage.value = count
+const previewWindow = useVirtualRows({
+  count: previewCount,
+  estimateSize: 22,
+  scrollElement: previewScrollRef,
+  measure: true,
 })
+
+function cellsFor(index: number): CellValue[] {
+  const sheet = currentPreviewSheet.value
+  if (!sheet) return []
+  if (!sheet.paged) return smallGrid.value[index] ?? []
+  const width = Math.max(columnCount.value, 1)
+  const line: CellValue[] = Array.from({ length: width }, () => null)
+  const headerAt = sheet.headerRowIndex
+  if (index <= headerAt) {
+    const source = sheet.sourceGrid?.[index] ?? []
+    for (let column = 0; column < width; column++) line[column] = source[column] ?? null
+    if (index === headerAt) {
+      sheet.headers.forEach((header, column) => {
+        line[column] = header.label
+      })
+    }
+    return line
+  }
+  const dataIndex = index - headerAt - 1
+  const row = previewRows.value[dataIndex] ?? {}
+  sheet.headers.forEach((header, column) => {
+    line[column] = row[header.key] ?? null
+  })
+  return line
+}
+
 watch(
-  () => currentPreviewSheet.value?.id,
   () => {
-    previewPage.value = 1
+    const rows = previewWindow.items.value
+    const sheet = currentPreviewSheet.value
+    return [
+      sheet?.id ?? '',
+      sheet?.paged ? 1 : 0,
+      workbookStore.dataRevision,
+      rows[0]?.index ?? -1,
+      rows[rows.length - 1]?.index ?? -1,
+      previewCount.value,
+    ].join('|')
   },
+  async () => {
+    const sheet = currentPreviewSheet.value
+    const rows = previewWindow.items.value
+    const token = ++previewToken
+    if (!sheet?.paged || rows.length === 0) {
+      previewRows.value = {}
+      heldKey = ''
+      return
+    }
+    const headerAt = sheet.headerRowIndex
+    const dataIndexes = rows
+      .map((item) => item.index - headerAt - 1)
+      .filter((index) => index >= 0)
+    if (dataIndexes.length === 0) return
+    const lastRow = Math.max(0, (sheet.rowCount ?? 1) - 1)
+    const from = Math.max(0, Math.min(...dataIndexes) - VIEW_BUFFER)
+    const to = Math.min(lastRow, Math.max(...dataIndexes) + VIEW_BUFFER)
+    const key = `${sheet.id}:${workbookStore.dataRevision}:${from}:${to}`
+    if (key === heldKey) return
+    const loaded = await readLogicalRange(sheet.id, from, to - from + 1)
+    if (token !== previewToken) return
+    const next: Record<number, RowData> = {}
+    for (let offset = 0; offset < loaded.length; offset++) next[from + offset] = loaded[offset] ?? {}
+    previewRows.value = next
+    heldKey = key
+  },
+  { immediate: true },
 )
 
 function onSelectSheet(sheetId: string) {
@@ -151,7 +192,7 @@ function isHeaderRow(rowIndex: number): boolean {
       </div>
 
       <div class="flex items-center gap-2 text-[11px] opacity-70">
-        <span>{{ fullGrid.length.toLocaleString('vi-VN') }} dòng</span>
+        <span>{{ previewCount.toLocaleString('vi-VN') }} dòng</span>
         <span>•</span>
         <span>{{ columnCount }} cột</span>
         <span>Calibri 11</span>
@@ -159,8 +200,8 @@ function isHeaderRow(rowIndex: number): boolean {
     </div>
 
     <!-- ── Spreadsheet Grid ────────────────────────────────────────────────── -->
-    <div class="flex-1 overflow-auto scrollbar-thin excel-grid bg-base-100 relative">
-      <div v-if="!currentPreviewSheet || columnCount === 0" class="flex flex-col items-center justify-center h-48 opacity-50 gap-2">
+    <div ref="previewScrollRef" class="flex-1 overflow-auto scrollbar-thin excel-grid bg-base-100 relative">
+      <div v-if="!currentPreviewSheet || previewCount === 0" class="flex flex-col items-center justify-center h-48 opacity-50 gap-2">
         <FileSpreadsheet class="w-10 h-10 stroke-1" />
         <span class="text-xs">Không có dữ liệu sheet để xem trước.</span>
       </div>
@@ -179,33 +220,33 @@ function isHeaderRow(rowIndex: number): boolean {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="line in pagedGrid" :key="line.index">
+          <tr v-if="previewWindow.paddingStart.value > 0" aria-hidden="true">
+            <td :colspan="columnCount + 1" class="border-0 p-0" :style="{ height: `${previewWindow.paddingStart.value}px` }" />
+          </tr>
+          <tr
+            v-for="item in previewWindow.items.value"
+            :key="item.index"
+            :ref="previewWindow.measureElement"
+            :data-index="item.index"
+          >
             <td class="excel-header-col sticky left-0 z-10 bg-[#f3f3f3] text-center font-normal">
-              {{ line.index + 1 }}
+              {{ item.index + 1 }}
             </td>
             <td
-              v-for="(value, colIdx) in line.cells"
+              v-for="(value, colIdx) in cellsFor(item.index)"
               :key="colIdx"
               class="excel-cell"
-              :class="isHeaderRow(line.index) ? 'font-bold' : ''"
-              :style="isHeaderRow(line.index) ? { backgroundColor: '#217346', color: '#ffffff' } : undefined"
+              :class="isHeaderRow(item.index) ? 'font-bold' : ''"
+              :style="isHeaderRow(item.index) ? { backgroundColor: '#217346', color: '#ffffff' } : undefined"
             >
-              {{ cellText(line.index, colIdx, value) }}
+              {{ cellText(item.index, colIdx, value) }}
             </td>
+          </tr>
+          <tr v-if="previewWindow.paddingEnd.value > 0" aria-hidden="true">
+            <td :colspan="columnCount + 1" class="border-0 p-0" :style="{ height: `${previewWindow.paddingEnd.value}px` }" />
           </tr>
         </tbody>
       </table>
-    </div>
-
-    <div
-      v-if="previewPageCount > 1"
-      class="flex items-center justify-end gap-1 border-t border-base-300 px-2 py-1 text-xs"
-    >
-      <button type="button" class="btn btn-ghost btn-xs" :disabled="previewPage <= 1" @click="previewPage = 1">Trang đầu</button>
-      <button type="button" class="btn btn-ghost btn-xs" :disabled="previewPage <= 1" @click="previewPage -= 1">Trang trước</button>
-      <span class="px-1">Trang {{ previewPage }} / {{ previewPageCount }}</span>
-      <button type="button" class="btn btn-ghost btn-xs" :disabled="previewPage >= previewPageCount" @click="previewPage += 1">Trang sau</button>
-      <button type="button" class="btn btn-ghost btn-xs" :disabled="previewPage >= previewPageCount" @click="previewPage = previewPageCount">Trang cuối</button>
     </div>
 
     <!-- ── Preview Sheet Tabs ──────────────────────────────────────────────── -->

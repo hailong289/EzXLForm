@@ -19,6 +19,7 @@ import { LARGE_FILE_BYTES, isImportStopped } from '@/composables/importLargeWork
 import { useTheme } from '@/composables/useTheme'
 import { useHistory } from '@/composables/useHistory'
 import { useSqliteStorage } from '@/composables/useSqliteStorage'
+import { clearAllRowMarks, rowMarksRevision } from '@/composables/rowMarks'
 import { syncBodyRows } from '@/utils/sheetGrid'
 import { debounce } from 'lodash-es'
 import type { ImportOptions, WorkbookData } from '@/types/excel'
@@ -75,6 +76,10 @@ watch(
     if (workbookStore.workbook) debouncedSaveSqlite()
   },
 )
+
+watch(rowMarksRevision, () => {
+  if (workbookStore.workbook) debouncedSaveSqlite()
+})
 
 // Modal states
 const showFindReplace = ref(false)
@@ -157,7 +162,7 @@ async function openImportedWorkbook(fileName: string, wb: WorkbookData) {
   await flushCurrentSession()
   adoptSessionForFile(fileName)
   workbookStore.setWorkbook(wb)
-  appConfigStore.setPage(1)
+  clearAllRowMarks()
   appConfigStore.clearSearch()
   const bigRows = wb.sheets.reduce(
     (sum, sheet) => sum + (sheet.paged ? sheet.rowCount ?? 0 : sheet.rows.length),
@@ -349,6 +354,7 @@ function handleKeydown(e: KeyboardEvent) {
 
 async function handleGoHome() {
   await flushCurrentSession()
+  clearAllRowMarks()
   workbookStore.resetWorkbook()
   showIntro.value = true
 }
@@ -380,6 +386,7 @@ async function handleDeleteSession(id: string) {
       return
     }
   }
+  clearAllRowMarks()
   workbookStore.resetWorkbook()
 }
 

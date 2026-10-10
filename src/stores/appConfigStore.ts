@@ -1,45 +1,36 @@
 import { defineStore } from 'pinia'
 import type { Toast, AdvancedFilterRule, FilterJoin, FindReplaceOptions } from '@/types/excel'
 
-export const PAGE_SIZE_OPTIONS = [20, 50, 100, 200, 500, 1000] as const
-
-const PAGE_SIZE_KEY = 'excel_editor_rows_per_page'
-
-function savedRowsPerPage(): number {
-  try {
-    const value = Number(localStorage.getItem(PAGE_SIZE_KEY))
-    if ((PAGE_SIZE_OPTIONS as readonly number[]).includes(value)) return value
-  } catch {
-    /* trình duyệt chặn storage thì dùng mặc định */
-  }
-  return 50
+export interface ListWindow {
+  filtering: boolean
+  from: number
+  to: number
+  total: number
 }
 
 interface AppConfigState {
   viewMode: 'editor' | 'preview'
   splitRatio: number
-  rowsPerPage: number
-  currentPage: number
   searchQuery: string
   filterColumn: string
   advancedRules: AdvancedFilterRule[]
   advancedJoin: FilterJoin
   pendingReplace: FindReplaceOptions | null
   toasts: Toast[]
+  listWindow: ListWindow | null
 }
 
 export const useAppConfigStore = defineStore('appConfig', {
   state: (): AppConfigState => ({
     viewMode: 'editor',
     splitRatio: 55,
-    rowsPerPage: savedRowsPerPage(),
-    currentPage: 1,
     searchQuery: '',
     filterColumn: '',
     advancedRules: [],
     advancedJoin: 'and',
     pendingReplace: null,
     toasts: [],
+    listWindow: null,
   }),
 
   getters: {
@@ -55,27 +46,14 @@ export const useAppConfigStore = defineStore('appConfig', {
       this.splitRatio = Math.max(20, Math.min(80, ratio))
     },
 
-    setPage(page: number) {
-      this.currentPage = Math.max(1, page)
-    },
-
-    setRowsPerPage(n: number) {
-      const next = (PAGE_SIZE_OPTIONS as readonly number[]).includes(n) ? n : 50
-      const firstRow = (this.currentPage - 1) * this.rowsPerPage
-      this.rowsPerPage = next
-      this.currentPage = Math.floor(firstRow / next) + 1
-      try {
-        localStorage.setItem(PAGE_SIZE_KEY, String(next))
-      } catch {
-        /* bỏ qua nếu không ghi được */
-      }
+    setListWindow(window: ListWindow | null) {
+      this.listWindow = window
     },
 
     setSearch(query: string, column: string = '') {
       this.searchQuery = query
       this.filterColumn = column
       this.pendingReplace = null
-      this.currentPage = 1
     },
 
     applyFindFilter(options: FindReplaceOptions) {
@@ -85,7 +63,6 @@ export const useAppConfigStore = defineStore('appConfig', {
         ...options,
         columns: [...options.columns],
       }
-      this.currentPage = 1
     },
 
     clearSearch() {
@@ -99,7 +76,6 @@ export const useAppConfigStore = defineStore('appConfig', {
     setAdvancedFilter(rules: AdvancedFilterRule[], join: FilterJoin) {
       this.advancedRules = rules.map((rule) => ({ ...rule }))
       this.advancedJoin = join
-      this.currentPage = 1
     },
 
     addToast(toast: Omit<Toast, 'id'>): string {

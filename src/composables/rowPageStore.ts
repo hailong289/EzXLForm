@@ -92,9 +92,10 @@ export async function scanRows(
   sheetId: string,
   rowCount: number,
   visit: (index: number, row: RowData) => boolean | Promise<boolean>,
+  fromIndex = 0,
 ): Promise<void> {
   const batchSize = 2000
-  for (let start = 0; start < rowCount; start += batchSize) {
+  for (let start = Math.max(0, fromIndex); start < rowCount; start += batchSize) {
     const count = Math.min(batchSize, rowCount - start)
     const rows = await readRange(sheetId, start, count)
     for (let offset = 0; offset < rows.length; offset++) {
@@ -200,13 +201,14 @@ export async function scanLogicalRows(
   sheetId: string,
   rowCount: number,
   visit: (index: number, row: RowData) => boolean | Promise<boolean>,
+  fromIndex = 0,
 ): Promise<void> {
   if (!sheetOrders.get(sheetId)?.order) {
-    await scanRows(sheetId, rowCount, visit)
+    await scanRows(sheetId, rowCount, visit, fromIndex)
     return
   }
   const batchSize = 2000
-  for (let start = 0; start < rowCount; start += batchSize) {
+  for (let start = Math.max(0, fromIndex); start < rowCount; start += batchSize) {
     const count = Math.min(batchSize, rowCount - start)
     const rows = await readLogicalRange(sheetId, start, count)
     for (let offset = 0; offset < rows.length; offset++) {

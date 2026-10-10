@@ -3,10 +3,6 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import {
   Search,
   Filter,
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
   FileX,
   X,
   PanelLeftOpen,
@@ -18,7 +14,9 @@ import {
 } from 'lucide-vue-next'
 import { useWorkbookStore } from '@/stores/workbookStore'
 import { useSelectionStore } from '@/stores/selectionStore'
-import { PAGE_SIZE_OPTIONS, useAppConfigStore } from '@/stores/appConfigStore'
+import { useAppConfigStore } from '@/stores/appConfigStore'
+import { useProgressTaskStore } from '@/stores/progressTaskStore'
+import { useVirtualRows } from '@/composables/useVirtualRows'
 import { useHistory } from '@/composables/useHistory'
 import RowForm from './RowForm.vue'
 import TableHeaderCell from './TableHeaderCell.vue'
@@ -28,11 +26,14 @@ import type { AdvancedFilterRule, CellValue, ColumnHeader, RowData } from '@/typ
 import { ensureSourceGrid, headerChoiceIndexes, previewGridLine, sheetRowCount } from '@/utils/sheetGrid'
 import { DATE_FORMATS, DEFAULT_DATE_FORMAT } from '@/utils/dateFormat'
 import { activeFilterRules, operatorsFor, operatorNeedsValue, rowMatchesFilters } from '@/utils/rowFilter'
-import { readLogicalRange, scanLogicalRows } from '@/composables/rowPageStore'
+import { hasSheetOrder, readLogicalRange, scanLogicalRows } from '@/composables/rowPageStore'
+import { useRowMarks, MARK_COLORS, type MarkColor } from '@/composables/rowMarks'
 
 const workbookStore = useWorkbookStore()
 const selectionStore = useSelectionStore()
 const appConfigStore = useAppConfigStore()
+const progressStore = useProgressTaskStore()
+const rowMarks = useRowMarks()
 const { push: pushHistory } = useHistory()
 
 // ─── Kéo Co Dãn Độ Rộng Form (Resizable Form Panel) ─────────────────────────
@@ -123,6 +124,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  cancelSearchTask()
+  appConfigStore.setListWindow(null)
   editorResizeObserver?.disconnect()
   headerSizeObserver?.disconnect()
   window.removeEventListener('pagehide', onEditorPageHide)
@@ -144,8 +147,12 @@ const pendingEdits = new Map<number, RowData>()
 const pendingEditBefore = new Map<number, RowData>()
 const pendingEditTimers = new Map<number, ReturnType<typeof setTimeout>>()
 const pagedMatches = ref<number[] | null>(null)
+const matchRevision = ref(0)
 const searchScanning = ref(false)
 let visibleLoadToken = 0
+let searchTaskId: string | null = null
+const VIEW_BUFFER = 80
+const ROW_HEIGHT = 32
 
 function rowAt(index: number): RowData | undefined {
   if (activeSheet.value?.paged) {
@@ -186,9 +193,9 @@ watch(
 )
 
 watch(selectedRowIndex, (index) => {
-  if (!activeSheet.value?.paged || index == null) return
-  const page = Math.floor(index / appConfigStore.rowsPerPage) + 1
-  if (page !== appConfigStore.currentPage) appConfigStore.setPage(page)
+  if (index == null) return
+  jumpRowInput.value = index + 1
+  nextTick(() => scrollToLogical(index))
 })
 
 const headerChoices = computed(() => {
@@ -326,6 +333,7 @@ function filtersAreActive(): boolean {
 
 // Filtered Rows
 const filteredRowIndices = computed(() => {
+  void matchRevision.value
   if (activeSheet.value?.paged) return pagedMatches.value ?? []
   if (!filtersAreActive()) return allRows.value.map((_, index) => index)
 
@@ -347,25 +355,164 @@ const filteredRowIndices = computed(() => {
   return indices
 })
 
-const totalFilteredRows = computed(() => {
-  if (activeSheet.value?.paged && !filtersAreActive()) return rowTotal.value
-  return filteredRowIndices.value.length
+const listCount = computed(() => {
+  if (filtersAreActive()) return filteredRowIndices.value.length
+  return rowTotal.value
 })
-const totalPages = computed(() =>
-  Math.max(1, Math.ceil(totalFilteredRows.value / appConfigStore.rowsPerPage)),
-)
 
-const paginatedIndices = computed(() => {
-  const start = (appConfigStore.currentPage - 1) * appConfigStore.rowsPerPage
-  const end = start + appConfigStore.rowsPerPage
-  if (activeSheet.value?.paged && !filtersAreActive()) {
-    const last = Math.min(end, rowTotal.value)
-    const indexes: number[] = []
-    for (let index = start; index < last; index++) indexes.push(index)
-    return indexes
-  }
-  return filteredRowIndices.value.slice(start, end)
+const rowWindow = useVirtualRows({
+  count: listCount,
+  estimateSize: ROW_HEIGHT,
+  scrollElement: tableScrollRef,
 })
+
+function logicalAt(viewIndex: number): number {
+  if (filtersAreActive()) return filteredRowIndices.value[viewIndex] ?? viewIndex
+  return viewIndex
+}
+
+function scrollToLogical(index: number) {
+  if (listCount.value <= 0) return
+  let view = index
+  if (filtersAreActive()) {
+    const found = filteredRowIndices.value.indexOf(index)
+    if (found < 0) return
+    view = found
+  }
+  rowWindow.scrollToIndex(view)
+}
+
+const jumpRowInput = ref<number | ''>('')
+const markColor = ref<MarkColor>('amber')
+const showMarkList = ref(false)
+const markPreviews = ref<Record<number, string>>({})
+
+function jumpToRowNumber() {
+  if (rowTotal.value <= 0) return
+  const value = Number(jumpRowInput.value)
+  if (!Number.isFinite(value)) return
+  const logical = Math.min(Math.max(1, Math.floor(value)), rowTotal.value) - 1
+  jumpRowInput.value = logical + 1
+  selectRowForEdit(logical)
+}
+
+function jumpToLastRow() {
+  if (listCount.value <= 0) return
+  const logical = logicalAt(listCount.value - 1)
+  jumpRowInput.value = logical + 1
+  selectRowForEdit(logical)
+}
+
+const currentMarked = computed(() => {
+  const sheetId = activeSheet.value?.id
+  if (!sheetId || selectedRowIndex.value === null) return false
+  return rowMarks.isMarked(sheetId, selectedRowIndex.value)
+})
+
+const markCount = computed(() => (activeSheet.value ? rowMarks.count(activeSheet.value.id) : 0))
+
+function toggleRowMark(index: number) {
+  const sheetId = activeSheet.value?.id
+  if (!sheetId || index < 0 || index >= rowTotal.value) return
+  rowMarks.toggle(sheetId, index, markColor.value)
+}
+
+function toggleCurrentMark() {
+  if (selectedRowIndex.value === null) return
+  toggleRowMark(selectedRowIndex.value)
+}
+
+function setCurrentMarkColor(color: MarkColor) {
+  markColor.value = color
+  const sheetId = activeSheet.value?.id
+  if (!sheetId || selectedRowIndex.value === null) return
+  if (rowMarks.isMarked(sheetId, selectedRowIndex.value)) {
+    rowMarks.setMark(sheetId, selectedRowIndex.value, color)
+  }
+}
+
+function markPreviewText(row: RowData): string {
+  const bits = headers.value
+    .slice(0, 4)
+    .map((header) => {
+      const value = row[header.key]
+      if (value == null || value === '') return ''
+      return String(value)
+    })
+    .filter(Boolean)
+  return bits.join(' · ') || '(trống)'
+}
+
+async function openMarkList() {
+  const sheet = activeSheet.value
+  if (!sheet) return
+  showMarkList.value = true
+  const indexes = rowMarks.list(sheet.id).map((item) => item.index)
+  const previews: Record<number, string> = {}
+  try {
+    if (sheet.paged && indexes.length > 0) {
+      const loaded = await readLogicalIndexes(sheet.id, indexes)
+      for (const index of indexes) previews[index] = markPreviewText(loaded.get(index) ?? {})
+    } else {
+      for (const index of indexes) previews[index] = markPreviewText(allRows.value[index] ?? {})
+    }
+    markPreviews.value = previews
+  } finally {
+    const current = selectedRowIndex.value
+    const focus = current !== null && indexes.includes(current) ? current : indexes[0]
+    if (focus !== undefined) selectRowForEdit(focus)
+  }
+}
+
+function closeMarkList() {
+  showMarkList.value = false
+}
+
+function removeMarkedRow(index: number) {
+  const sheetId = activeSheet.value?.id
+  if (!sheetId) return
+  rowMarks.removeMark(sheetId, index)
+  const next = { ...markPreviews.value }
+  delete next[index]
+  markPreviews.value = next
+}
+
+function recolorMarkedRow(index: number, color: MarkColor) {
+  const sheetId = activeSheet.value?.id
+  if (!sheetId) return
+  rowMarks.setMark(sheetId, index, color)
+}
+
+function markClass(color: MarkColor): string {
+  return `mark-swatch mark-swatch-${color}`
+}
+
+function dataRowClass(viewIndex: number): Record<string, boolean> {
+  const logical = logicalAt(viewIndex)
+  const sheetId = activeSheet.value?.id
+  const color = sheetId ? rowMarks.colorOf(sheetId, logical) : null
+  return {
+    'row-active font-medium': selectedRowIndex.value === logical,
+    'row-checked': selectionStore.isRowSelected(logical),
+    'row-fresh': !!sheetId && workbookStore.isFreshRow(sheetId, logical),
+    'row-drop': dropRowIndex.value === logical,
+    ...(color ? { [`mark-${color}`]: true } : {}),
+  }
+}
+
+function jumpToNextMark() {
+  const sheetId = activeSheet.value?.id
+  if (!sheetId) return
+  const next = rowMarks.nextAfter(sheetId, selectedRowIndex.value ?? -1)
+  if (next === null) return
+  selectRowForEdit(next)
+}
+
+function cancelSearchTask() {
+  if (!searchTaskId) return
+  progressStore.remove(searchTaskId)
+  searchTaskId = null
+}
 
 let searchToken = 0
 watch(
@@ -373,16 +520,35 @@ watch(
     `${activeSheet.value?.id ?? ''}|${appConfigStore.searchQuery}|${appConfigStore.filterColumn}|${appConfigStore.advancedJoin}|${JSON.stringify(appConfigStore.advancedRules)}`,
   async () => {
     const sheet = activeSheet.value
+    const token = ++searchToken
+    cancelSearchTask()
     if (!sheet?.paged || !filtersAreActive()) {
       pagedMatches.value = null
+      matchRevision.value += 1
       searchScanning.value = false
       return
     }
-    const token = ++searchToken
-    searchScanning.value = true
     const matches: number[] = []
-    await scanLogicalRows(sheet.id, sheet.rowCount ?? 0, (index, row) => {
+    pagedMatches.value = matches
+    matchRevision.value += 1
+    searchScanning.value = true
+    const taskId = progressStore.enqueue({
+      title: 'Lọc dòng',
+      detail: sheet.name,
+      sheetId: sheet.id,
+      kind: 'filter',
+    })
+    searchTaskId = taskId
+    progressStore.setStatus(taskId, 'running')
+    const signal = progressStore.signal(taskId)
+    const total = sheet.rowCount ?? 0
+    let stopped = false
+    await scanLogicalRows(sheet.id, total, async (index, row) => {
       if (token !== searchToken) return false
+      if (signal && !(await signal.checkpoint())) {
+        stopped = true
+        return false
+      }
       if (
         rowMatchesFilters(
           row,
@@ -394,73 +560,120 @@ watch(
         )
       ) {
         matches.push(index)
+        if (matches.length % 200 === 0) matchRevision.value += 1
       }
-      return matches.length < 20000
+      if (index > 0 && index % 2000 === 0) {
+        progressStore.setPercent(taskId, Math.round((index / Math.max(total, 1)) * 100))
+        progressStore.setDetail(taskId, `${sheet.name} · ${matches.length.toLocaleString('vi-VN')} dòng khớp`)
+      }
+      return true
     })
     if (token !== searchToken) return
-    pagedMatches.value = matches
+    matchRevision.value += 1
     searchScanning.value = false
-    if (matches.length >= 20000) {
-      appConfigStore.addToast({
-        type: 'info',
-        message: 'Bộ lọc file lớn dừng ở 20.000 dòng khớp đầu tiên.',
-      })
-    }
+    if (searchTaskId === taskId) searchTaskId = null
+    if (!progressStore.tasks.some((task) => task.id === taskId)) return
+    progressStore.setPercent(taskId, stopped ? Math.round((matches.length > 0 ? 100 : 0)) : 100)
+    progressStore.setStatus(taskId, stopped ? 'cancelled' : 'done')
+    progressStore.setDetail(
+      taskId,
+      stopped
+        ? `${sheet.name} · đã dừng, ${matches.length.toLocaleString('vi-VN')} dòng khớp`
+        : `${sheet.name} · ${matches.length.toLocaleString('vi-VN')} dòng khớp`,
+    )
   },
 )
 
+let heldSheet = ''
+let heldRevision = -1
+let heldFrom = -1
+let heldTo = -1
+
+async function readLogicalIndexes(sheetId: string, indexes: number[]): Promise<Map<number, RowData>> {
+  const sorted = [...new Set(indexes)].sort((left, right) => left - right)
+  const loaded = new Map<number, RowData>()
+  let cursor = 0
+  while (cursor < sorted.length) {
+    let end = cursor
+    while (end + 1 < sorted.length && sorted[end + 1] === sorted[end] + 1) end += 1
+    const start = sorted[cursor]
+    const rows = await readLogicalRange(sheetId, start, sorted[end] - start + 1)
+    for (let offset = 0; offset < rows.length; offset++) loaded.set(start + offset, rows[offset] ?? {})
+    cursor = end + 1
+  }
+  return loaded
+}
+
 watch(
-  () =>
-    [
-      activeSheet.value?.id,
-      activeSheet.value?.paged,
-      appConfigStore.currentPage,
-      appConfigStore.rowsPerPage,
+  () => {
+    const rows = rowWindow.items.value
+    const first = rows[0]?.index ?? -1
+    const last = rows[rows.length - 1]?.index ?? -1
+    return [
+      activeSheet.value?.id ?? '',
+      activeSheet.value?.paged ? 1 : 0,
       workbookStore.dataRevision,
-      paginatedIndices.value.join(','),
-    ].join('|'),
+      filtersAreActive() ? 1 : 0,
+      matchRevision.value,
+      first,
+      last,
+      listCount.value,
+    ].join('|')
+  },
   async () => {
     const sheet = activeSheet.value
-    const indexes = paginatedIndices.value
+    const rows = rowWindow.items.value
     const token = ++visibleLoadToken
-    if (!sheet?.paged || indexes.length === 0) {
+    if (!sheet?.paged || rows.length === 0 || listCount.value === 0) {
       visibleRows.value = {}
+      heldFrom = -1
+      heldTo = -1
+      publishListWindow()
       return
     }
-    const start = indexes[0]
-    const rows = await readLogicalRange(sheet.id, start, indexes[indexes.length - 1] - start + 1)
+    const viewFirst = rows[0].index
+    const viewLast = rows[rows.length - 1].index
+    const from = Math.max(0, viewFirst - VIEW_BUFFER)
+    const to = Math.min(listCount.value - 1, viewLast + VIEW_BUFFER)
+    publishListWindow()
+    if (
+      sheet.id === heldSheet &&
+      workbookStore.dataRevision === heldRevision &&
+      from >= heldFrom &&
+      to <= heldTo
+    ) {
+      return
+    }
+    const logicals: number[] = []
+    for (let index = from; index <= to; index++) logicals.push(logicalAt(index))
+    const loaded = await readLogicalIndexes(sheet.id, logicals)
     if (token !== visibleLoadToken) return
     const next: Record<number, RowData> = {}
-    indexes.forEach((index) => {
-      next[index] = pendingEdits.get(index) ?? rows[index - start] ?? {}
-    })
+    for (const index of logicals) {
+      next[index] = pendingEdits.get(index) ?? loaded.get(index) ?? {}
+    }
     visibleRows.value = next
+    heldSheet = sheet.id
+    heldRevision = workbookStore.dataRevision
+    heldFrom = from
+    heldTo = to
   },
   { immediate: true },
 )
 
-function prevPage() {
-  if (appConfigStore.currentPage > 1) {
-    appConfigStore.setPage(appConfigStore.currentPage - 1)
+function publishListWindow() {
+  const rows = rowWindow.items.value
+  if (rows.length === 0 || listCount.value === 0) {
+    appConfigStore.setListWindow(null)
+    return
   }
-}
-
-function nextPage() {
-  if (appConfigStore.currentPage < totalPages.value) {
-    appConfigStore.setPage(appConfigStore.currentPage + 1)
-  }
-}
-
-function firstPage() {
-  appConfigStore.setPage(1)
-}
-
-function lastPage() {
-  appConfigStore.setPage(totalPages.value)
-}
-
-function onChangePageSize(event: Event) {
-  appConfigStore.setRowsPerPage(Number((event.target as HTMLSelectElement).value))
+  const filtering = filtersAreActive()
+  appConfigStore.setListWindow({
+    filtering,
+    from: rows[0].index + 1,
+    to: rows[rows.length - 1].index + 1,
+    total: filtering ? listCount.value : rowTotal.value,
+  })
 }
 
 // Select row to edit in Form
@@ -518,11 +731,11 @@ async function handleCreateRow(
   const row = kind === 'blank' ? emptyRow() : { ...newRowData }
 
   await workbookStore.addRow(sheetId, row, insertAt)
+  if (insertAt !== undefined) rowMarks.noteRowInserted(sheetId, insertAt)
   const newIndex = insertAt ?? sheetRowCount(activeSheet.value) - 1
   selectedRowIndex.value = newIndex
-  appConfigStore.setPage(Math.floor(newIndex / appConfigStore.rowsPerPage) + 1)
   await nextTick()
-  document.querySelector('tr.row-active')?.scrollIntoView({ block: 'nearest' })
+  scrollToLogical(newIndex)
 
   pushHistory({
     type: 'ADD_ROW',
@@ -633,6 +846,8 @@ async function handleDeleteRow(rowIndex: number) {
   const sheetId = activeSheet.value.id
   const oldRow = { ...(rowAt(rowIndex) ?? {}) }
 
+  const swapTail = Boolean(activeSheet.value.paged) && !hasSheetOrder(sheetId)
+  rowMarks.noteRowsDeleted(sheetId, [rowIndex], swapTail, rowTotal.value)
   await workbookStore.deleteRows(sheetId, [rowIndex])
 
   pushHistory({
@@ -848,6 +1063,7 @@ async function onRowDrop(targetIndex: number) {
   if (from === null || from === targetIndex || !sheet) return
   await flushAllPagedEdits()
   await workbookStore.moveRow(sheet.id, from, targetIndex)
+  rowMarks.noteRowMoved(sheet.id, from, targetIndex)
   if (selectedRowIndex.value !== null) {
     selectedRowIndex.value = shiftedIndex(selectedRowIndex.value, from, targetIndex)
   }
@@ -897,15 +1113,31 @@ function columnSum(header: ColumnHeader): string {
     : sum.toLocaleString(undefined, { maximumFractionDigits: 2 })
 }
 
+const headerAllSelected = computed(() => {
+  const selected = new Set(selectionStore.selectedRowIndexes)
+  if (filtersAreActive()) {
+    const indexes = filteredRowIndices.value
+    return indexes.length > 0 && indexes.every((index) => selected.has(index))
+  }
+  return rowTotal.value > 0 && selected.size === rowTotal.value
+})
+
 function toggleHeaderSelection() {
-  const indexes = activeSheet.value?.paged ? paginatedIndices.value : filteredRowIndices.value
-  const allOn = indexes.length > 0 && indexes.every((idx) => selectionStore.isRowSelected(idx))
-  if (activeSheet.value?.paged) {
-    selectionStore.selectedRowIndexes = allOn ? [] : [...indexes]
+  if (filtersAreActive()) {
+    const indexes = filteredRowIndices.value
+    const selected = new Set(selectionStore.selectedRowIndexes)
+    const allOn = indexes.length > 0 && indexes.every((index) => selected.has(index))
+    if (allOn) {
+      const drop = new Set(indexes)
+      selectionStore.selectedRowIndexes = selectionStore.selectedRowIndexes.filter((index) => !drop.has(index))
+      return
+    }
+    indexes.forEach((index) => selected.add(index))
+    selectionStore.selectedRowIndexes = [...selected]
     return
   }
-  if (allOn) selectionStore.clearSelection()
-  else selectionStore.selectAll(allRows.value.length)
+  if (headerAllSelected.value) selectionStore.clearSelection()
+  else selectionStore.selectAll(rowTotal.value)
 }
 
 function onHeaderMoveLeft(key: string) {
@@ -1015,12 +1247,13 @@ function addNamedColumn() {
   <div ref="editorContainerRef" class="flex h-full w-full bg-base-100 overflow-hidden select-none relative">
     <!-- ── 1. FORM NHẬP LIỆU (KÉO CO DÃN ĐƯỢC ĐỘ RỘNG) ─────────────────────── -->
     <div
-      v-show="showForm"
+      v-show="showForm && !showMarkList"
       class="h-full min-w-0 border-r border-base-300"
       :class="showTableList && formWidth == null ? 'flex-1' : 'flex-shrink-0'"
       :style="!showTableList ? { width: '100%', maxWidth: '100%' } : formWidth == null ? undefined : { width: `${formWidth}px`, maxWidth: '50%' }"
     >
       <RowForm
+        v-if="!showMarkList"
         :headers="headers"
         :sheet-id="activeSheet?.id"
         :selected-row-index="selectedRowIndex"
@@ -1132,6 +1365,63 @@ function addNamedColumn() {
           </select>
         </label>
 
+        <form v-if="rowTotal > 0" class="flex items-center gap-1" @submit.prevent="jumpToRowNumber">
+          <span class="opacity-60 whitespace-nowrap">Đến dòng</span>
+          <input
+            v-model.number="jumpRowInput"
+            type="number"
+            min="1"
+            :max="rowTotal"
+            class="input input-xs input-bordered w-24 text-center"
+            title="Nhập số dòng rồi Enter"
+            aria-label="Số dòng cần đến"
+          />
+          <button type="submit" class="btn btn-xs btn-ghost">Đến</button>
+          <button type="button" class="btn btn-xs btn-ghost" title="Đến dòng cuối cùng" @click="jumpToLastRow">
+            Cuối
+          </button>
+          <div class="flex items-center gap-0.5" title="Màu tô khi đánh dấu">
+            <button
+              v-for="item in MARK_COLORS"
+              :key="item.id"
+              type="button"
+              class="mark-swatch"
+              :class="[markClass(item.id), { 'is-selected': markColor === item.id }]"
+              :title="item.label"
+              :aria-label="`Màu ${item.label}`"
+              @click="setCurrentMarkColor(item.id)"
+            />
+          </div>
+          <button
+            type="button"
+            class="btn btn-xs"
+            :class="currentMarked ? 'btn-warning' : 'btn-ghost'"
+            title="Đánh dấu hoặc bỏ dấu dòng đang xem"
+            :disabled="selectedRowIndex === null"
+            @click="toggleCurrentMark"
+          >
+            Đánh dấu
+          </button>
+          <button
+            type="button"
+            class="btn btn-xs btn-ghost"
+            title="Đến dòng đánh dấu kế tiếp"
+            :disabled="markCount === 0"
+            @click="jumpToNextMark"
+          >
+            Dấu kế<span v-if="markCount > 0"> ({{ markCount }})</span>
+          </button>
+          <button
+            type="button"
+            class="btn btn-xs btn-ghost"
+            title="Xem và sửa các dòng đã đánh dấu"
+            :disabled="markCount === 0"
+            @click="openMarkList"
+          >
+            Danh sách
+          </button>
+        </form>
+
         <!-- Nút thu gọn / mở rộng bảng -->
         <button
           v-if="!showForm"
@@ -1229,12 +1519,7 @@ function addNamedColumn() {
                   <input
                     type="checkbox"
                     class="checkbox checkbox-xs checkbox-primary"
-                    :checked="
-                      (activeSheet?.paged ? paginatedIndices : filteredRowIndices).length > 0 &&
-                      (activeSheet?.paged ? paginatedIndices : filteredRowIndices).every((idx) =>
-                        selectionStore.isRowSelected(idx),
-                      )
-                    "
+                    :checked="headerAllSelected"
                     @change="toggleHeaderSelection"
                   />
                 </div>
@@ -1268,19 +1553,22 @@ function addNamedColumn() {
           </thead>
 
           <tbody>
+            <tr v-if="rowWindow.paddingStart.value > 0" aria-hidden="true">
+              <td
+                :colspan="headers.length + 1"
+                class="border-0 p-0"
+                :style="{ height: `${rowWindow.paddingStart.value}px` }"
+              />
+            </tr>
             <tr
-              v-for="realIdx in paginatedIndices"
-              :key="realIdx"
+              v-for="item in rowWindow.items.value"
+              :key="logicalAt(item.index)"
               class="data-row border-b border-base-300 transition-colors cursor-pointer"
-              :class="{
-                'row-active font-medium': selectedRowIndex === realIdx,
-                'row-checked': selectionStore.isRowSelected(realIdx),
-                'row-fresh': !!activeSheet && workbookStore.isFreshRow(activeSheet.id, realIdx),
-                'row-drop': dropRowIndex === realIdx,
-              }"
-              @click="selectRowForEdit(realIdx)"
-              @dragover.prevent="onRowDragOver(realIdx)"
-              @drop.prevent="onRowDrop(realIdx)"
+              :style="{ height: `${ROW_HEIGHT}px` }"
+              :class="dataRowClass(item.index)"
+              @click="selectRowForEdit(logicalAt(item.index))"
+              @dragover.prevent="onRowDragOver(logicalAt(item.index))"
+              @drop.prevent="onRowDrop(logicalAt(item.index))"
             >
               <!-- Checkbox -->
               <td class="col-check border-r border-b border-base-300" @click.stop>
@@ -1291,7 +1579,7 @@ function addNamedColumn() {
                     draggable="true"
                     title="Kéo để sắp xếp dòng"
                     aria-label="Kéo để sắp xếp dòng"
-                    @dragstart.stop="onRowDragStart(realIdx, $event)"
+                    @dragstart.stop="onRowDragStart(logicalAt(item.index), $event)"
                     @dragend.stop="onRowDragEnd"
                   >
                     <GripVertical class="w-3 h-3" />
@@ -1299,27 +1587,43 @@ function addNamedColumn() {
                   <input
                     type="checkbox"
                     class="checkbox checkbox-xs checkbox-primary"
-                    :checked="selectionStore.isRowSelected(realIdx)"
-                    @change="selectionStore.toggleRowSelection(realIdx)"
+                    :checked="selectionStore.isRowSelected(logicalAt(item.index))"
+                    @change="selectionStore.toggleRowSelection(logicalAt(item.index))"
                   />
+                  <button
+                    type="button"
+                    class="row-index"
+                    :class="{ 'is-marked': !!activeSheet && rowMarks.isMarked(activeSheet.id, logicalAt(item.index)) }"
+                    title="Đánh dấu dòng này bằng màu đang chọn"
+                    @click.stop="toggleRowMark(logicalAt(item.index))"
+                  >
+                    {{ logicalAt(item.index) + 1 }}
+                  </button>
                 </div>
               </td>
 
               <TableRowCell
                 v-for="h in headers"
                 :key="h.key"
-                :value="rowAt(realIdx)?.[h.key] ?? null"
+                :value="rowAt(logicalAt(item.index))?.[h.key] ?? null"
                 :column-key="h.key"
-                :row-index="realIdx"
+                :row-index="logicalAt(item.index)"
                 :data-type="h.dataType"
                 :date-format="h.dateFormat"
                 :is-editing="
-                  selectionStore.editingCell?.rowIndex === realIdx &&
+                  selectionStore.editingCell?.rowIndex === logicalAt(item.index) &&
                   selectionStore.editingCell?.columnKey === h.key
                 "
-                @start-edit="startCellEdit(realIdx, h.key)"
+                @start-edit="startCellEdit(logicalAt(item.index), h.key)"
                 @end-edit="selectionStore.setEditingCell(null, null)"
-                @update="(value) => saveCell(realIdx, h.key, value)"
+                @update="(value) => saveCell(logicalAt(item.index), h.key, value)"
+              />
+            </tr>
+            <tr v-if="rowWindow.paddingEnd.value > 0" aria-hidden="true">
+              <td
+                :colspan="headers.length + 1"
+                class="border-0 p-0"
+                :style="{ height: `${rowWindow.paddingEnd.value}px` }"
               />
             </tr>
           </tbody>
@@ -1327,7 +1631,7 @@ function addNamedColumn() {
 
         <!-- Empty State -->
         <div
-          v-if="totalFilteredRows === 0"
+          v-if="listCount === 0"
           class="flex flex-col items-center justify-center h-48 opacity-50 gap-2"
         >
           <FileX class="w-10 h-10 stroke-1" />
@@ -1360,81 +1664,6 @@ function addNamedColumn() {
         </div>
       </div>
 
-      <!-- Phân trang -->
-      <div
-        class="flex items-center justify-between p-2 bg-base-200/70 border-t border-base-300 text-xs flex-wrap gap-2"
-      >
-        <div class="opacity-70 text-[11px]">
-          Hiển thị
-          <span class="font-bold">
-            {{
-              totalFilteredRows === 0
-                ? 0
-                : (appConfigStore.currentPage - 1) * appConfigStore.rowsPerPage + 1
-            }}
-            -
-            {{
-              Math.min(
-                appConfigStore.currentPage * appConfigStore.rowsPerPage,
-                totalFilteredRows,
-              )
-            }}
-          </span>
-          / <span class="font-bold">{{ totalFilteredRows }}</span> dòng
-        </div>
-
-        <label class="flex items-center gap-1">
-          <span class="opacity-60 text-[11px] whitespace-nowrap">Số dòng</span>
-          <select
-            class="select select-xs select-bordered w-20 text-xs"
-            :value="appConfigStore.rowsPerPage"
-            title="Số dòng mỗi trang"
-            @change="onChangePageSize"
-          >
-            <option v-for="size in PAGE_SIZE_OPTIONS" :key="size" :value="size">
-              {{ size }}
-            </option>
-          </select>
-        </label>
-
-        <div class="flex items-center gap-1">
-          <button
-            class="btn btn-ghost btn-xs btn-circle h-6 w-6 min-h-0"
-            title="Trang đầu"
-            :disabled="appConfigStore.currentPage <= 1"
-            @click="firstPage"
-          >
-            <ChevronsLeft class="w-3.5 h-3.5" />
-          </button>
-          <button
-            class="btn btn-ghost btn-xs btn-circle h-6 w-6 min-h-0"
-            title="Trang trước"
-            :disabled="appConfigStore.currentPage <= 1"
-            @click="prevPage"
-          >
-            <ChevronLeft class="w-3.5 h-3.5" />
-          </button>
-          <span class="px-1 text-[11px]">
-            {{ appConfigStore.currentPage }} / {{ totalPages }}
-          </span>
-          <button
-            class="btn btn-ghost btn-xs btn-circle h-6 w-6 min-h-0"
-            title="Trang sau"
-            :disabled="appConfigStore.currentPage >= totalPages"
-            @click="nextPage"
-          >
-            <ChevronRight class="w-3.5 h-3.5" />
-          </button>
-          <button
-            class="btn btn-ghost btn-xs btn-circle h-6 w-6 min-h-0"
-            title="Trang cuối"
-            :disabled="appConfigStore.currentPage >= totalPages"
-            @click="lastPage"
-          >
-            <ChevronsRight class="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
     </div>
 
     <BatchActionBar :headers="headers" />
@@ -1515,5 +1744,95 @@ function addNamedColumn() {
         </div>
       </div>
     </div>
+
+    <dialog v-if="showMarkList" class="modal modal-open" @keydown.esc.prevent="closeMarkList">
+      <div class="modal-box flex h-[min(820px,90vh)] w-[min(1080px,94vw)] max-w-none flex-col border border-base-300 p-0">
+        <div class="flex items-center justify-between gap-3 border-b border-base-300 px-4 py-3">
+          <div>
+            <h3 class="text-sm font-bold">Dòng đã đánh dấu</h3>
+            <p class="text-xs opacity-60">Chọn một dòng để sửa bằng form nhập liệu. Xóa chỉ bỏ dấu.</p>
+          </div>
+          <button type="button" class="btn btn-ghost btn-xs btn-square" title="Đóng" @click="closeMarkList">
+            <X class="w-4 h-4" />
+          </button>
+        </div>
+        <div class="flex min-h-0 flex-1">
+          <div class="flex w-72 flex-shrink-0 flex-col border-r border-base-300">
+            <p
+              v-if="!activeSheet || rowMarks.list(activeSheet.id).length === 0"
+              class="px-4 py-8 text-center text-sm opacity-60"
+            >
+              Chưa có dòng nào được đánh dấu.
+            </p>
+            <div v-else class="min-h-0 flex-1 overflow-auto">
+              <div
+                v-for="item in rowMarks.list(activeSheet.id)"
+                :key="item.index"
+                class="border-b border-base-300"
+                :class="selectedRowIndex === item.index ? 'bg-base-200' : ''"
+              >
+                <button
+                  type="button"
+                  class="flex w-full items-start gap-2 px-3 py-2 text-left"
+                  @click="selectRowForEdit(item.index)"
+                >
+                  <span class="mark-swatch mt-0.5 flex-shrink-0" :class="markClass(item.color)" />
+                  <span class="min-w-0">
+                    <span class="block font-mono text-xs font-bold">Dòng {{ item.index + 1 }}</span>
+                    <span class="block truncate text-[11px] opacity-60">{{ markPreviews[item.index] || '(trống)' }}</span>
+                  </span>
+                </button>
+                <div class="flex items-center justify-between gap-2 px-3 pb-2">
+                  <div class="flex items-center gap-1">
+                    <button
+                      v-for="color in MARK_COLORS"
+                      :key="color.id"
+                      type="button"
+                      class="mark-swatch"
+                      :class="[markClass(color.id), { 'is-selected': item.color === color.id }]"
+                      :title="color.label"
+                      :aria-label="`Đổi sang màu ${color.label}`"
+                      @click="recolorMarkedRow(item.index, color.id)"
+                    />
+                  </div>
+                  <button type="button" class="btn btn-ghost btn-xs text-error" @click="removeMarkedRow(item.index)">
+                    Bỏ dấu
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="min-h-0 min-w-0 flex-1">
+            <RowForm
+              :headers="headers"
+              :sheet-id="activeSheet?.id"
+              :selected-row-index="selectedRowIndex"
+              :selected-row="selectedRow"
+              :data-revision="workbookStore.dataRevision"
+              :total-rows="rowTotal"
+              :table-hidden="!showTableList"
+              :row-is-new="
+                selectedRowIndex !== null &&
+                !!activeSheet &&
+                workbookStore.isFreshRow(activeSheet.id, selectedRowIndex)
+              "
+              @create="handleCreateRow"
+              @commit="handleCommitFreshRow"
+              @edit-columns="showColumnEditor = true"
+              @update="handleUpdateRow"
+              @delete="handleDeleteRow"
+              @clear="handleClearForm"
+              @select-prev="handleSelectPrev"
+              @select-next="handleSelectNext"
+              @jump-to-row="selectRowForEdit"
+              @set-date-format="onHeaderSetDateFormat"
+              @hide="hideForm"
+              @show-table="showTableList = true"
+            />
+          </div>
+        </div>
+      </div>
+      <div class="modal-backdrop bg-black/40" @click="closeMarkList" />
+    </dialog>
   </div>
 </template>

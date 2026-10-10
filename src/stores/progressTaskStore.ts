@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import type { FindReplaceOptions } from '@/types/excel'
 
 export type ProgressTaskStatus = 'queued' | 'running' | 'paused' | 'done' | 'cancelled'
-export type ProgressTaskKind = 'import' | 'replace'
+export type ProgressTaskKind = 'import' | 'replace' | 'filter'
 
 export interface ProgressTask {
   id: string
@@ -24,9 +24,10 @@ function readStoredTasks(): ProgressTask[] {
     const parsed = JSON.parse(raw) as ProgressTask[]
     if (!Array.isArray(parsed)) return []
     return parsed.flatMap((task) => {
-      const kind: ProgressTaskKind = task.kind === 'import' ? 'import' : 'replace'
+      const kind: ProgressTaskKind =
+        task.kind === 'import' || task.kind === 'filter' || task.kind === 'replace' ? task.kind : 'replace'
       const unfinished = task.status === 'running' || task.status === 'paused' || task.status === 'queued'
-      if (kind === 'import' && unfinished) {
+      if ((kind === 'import' || kind === 'filter') && unfinished) {
         return [{ ...task, kind, status: 'cancelled' as const }]
       }
       if (kind === 'replace' && unfinished) {

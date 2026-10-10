@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Loader2, Replace, Search, X } from 'lucide-vue-next'
+import { Loader2, Replace, Search, X } from 'lucide-vue-next'
 import { useWorkbookStore } from '@/stores/workbookStore'
-import { PAGE_SIZE_OPTIONS, useAppConfigStore } from '@/stores/appConfigStore'
+import { useAppConfigStore } from '@/stores/appConfigStore'
+import { useVirtualRows } from '@/composables/useVirtualRows'
 import { useHistory } from '@/composables/useHistory'
 import { useProgressTaskStore } from '@/stores/progressTaskStore'
 import { scanLogicalRows } from '@/composables/rowPageStore'
@@ -23,8 +24,6 @@ const appConfigStore = useAppConfigStore()
 const { push: pushHistory } = useHistory()
 const progressStore = useProgressTaskStore()
 
-const PREVIEW_LIMIT = 200
-
 const step = ref<'form' | 'list'>('form')
 const findText = ref('')
 const replaceText = ref('')
@@ -37,8 +36,8 @@ const scanning = ref(false)
 const statusText = ref('')
 const matchCount = ref(0)
 const matchedRows = ref<Array<{ index: number; cells: Record<string, string> }>>([])
-const listPage = ref(1)
-const listPageSize = ref<number>(20)
+const listVersion = ref(0)
+const listScrollRef = ref<HTMLElement | null>(null)
 const activeOptions = ref<FindReplaceOptions | null>(null)
 const jobs = new Map<string, FindReplaceOptions>()
 const runningTaskIds = new Set<string>()
@@ -62,18 +61,15 @@ watch(
 const availableColumns = computed(() => workbookStore.activeSheet?.headers ?? [])
 const listHeaders = computed(() => workbookStore.activeSheet?.headers ?? [])
 const busy = computed(() => scanning.value)
-const listPageCount = computed(() => Math.max(1, Math.ceil(matchedRows.value.length / listPageSize.value)))
-const visibleMatches = computed(() => {
-  const start = (listPage.value - 1) * listPageSize.value
-  return matchedRows.value.slice(start, start + listPageSize.value)
+const listCount = computed(() => {
+  void listVersion.value
+  return matchedRows.value.length
 })
-
-function onListPageSize(event: Event) {
-  const next = Number((event.target as HTMLSelectElement).value)
-  if (!Number.isFinite(next) || next <= 0) return
-  listPageSize.value = next
-  listPage.value = 1
-}
+const matchWindow = useVirtualRows({
+  count: listCount,
+  estimateSize: 32,
+  scrollElement: listScrollRef,
+})
 
 watch(
   () => props.modelValue,
@@ -83,7 +79,7 @@ watch(
     scanning.value = false
     matchedRows.value = []
     matchCount.value = 0
-    listPage.value = 1
+    listVersion.value += 1
     activeOptions.value = null
   },
 )
@@ -118,10 +114,10 @@ function previewValue(value: RowData[string], header: ColumnHeader): string {
 }
 
 function rememberMatch(index: number, row: RowData, headers: ColumnHeader[]) {
-  if (matchedRows.value.length >= PREVIEW_LIMIT) return
   const cells: Record<string, string> = {}
   for (const header of headers) cells[header.key] = previewValue(row[header.key], header)
   matchedRows.value.push({ index, cells })
+  if (matchedRows.value.length % 100 === 0) listVersion.value += 1
 }
 
 async function handleFindOnly() {
@@ -134,7 +130,7 @@ async function handleFindOnly() {
   statusText.value = 'Đang lọc danh sách...'
   matchedRows.value = []
   matchCount.value = 0
-  listPage.value = 1
+  listVersion.value += 1
   await nextTick()
   await new Promise((resolve) => setTimeout(resolve, 30))
 
@@ -166,6 +162,7 @@ async function handleFindOnly() {
       }
     }
     matchCount.value = count
+    listVersion.value += 1
   } finally {
     scanning.value = false
     statusText.value = ''
@@ -405,9 +402,6 @@ async function replaceAll() {
             <p class="truncate text-xs text-base-content/70">
               {{ matchCount.toLocaleString('vi-VN') }} dòng
               {{ activeOptions?.matchEmpty ? 'có ô trống' : `khớp "${activeOptions?.findText}"` }}
-              <template v-if="matchCount > matchedRows.length">
-                · đang hiện {{ matchedRows.length.toLocaleString('vi-VN') }} dòng đầu
-              </template>
             </p>
           </div>
           <button class="btn btn-ghost btn-xs btn-circle" :disabled="busy" @click="close">
@@ -415,7 +409,7 @@ async function replaceAll() {
           </button>
         </div>
 
-        <div class="min-h-0 flex-1 overflow-auto rounded-lg border border-base-300">
+        <div ref="listScrollRef" class="min-h-0 flex-1 overflow-auto rounded-lg border border-base-300">
           <table class="table table-xs table-pin-rows">
             <thead>
               <tr>
@@ -428,67 +422,23 @@ async function replaceAll() {
                   Không có dòng nào khớp.
                 </td>
               </tr>
-              <tr v-for="item in visibleMatches" :key="item.index">
+              <tr v-if="matchWindow.paddingStart.value > 0" aria-hidden="true">
+                <td :colspan="Math.max(listHeaders.length, 1)" class="border-0 p-0" :style="{ height: `${matchWindow.paddingStart.value}px` }" />
+              </tr>
+              <tr
+                v-for="item in matchWindow.items.value"
+                :key="matchedRows[item.index]?.index ?? item.index"
+                class="h-8"
+              >
                 <td v-for="header in listHeaders" :key="header.key" class="max-w-48 truncate">
-                  {{ item.cells[header.key] }}
+                  {{ matchedRows[item.index]?.cells[header.key] }}
                 </td>
+              </tr>
+              <tr v-if="matchWindow.paddingEnd.value > 0" aria-hidden="true">
+                <td :colspan="Math.max(listHeaders.length, 1)" class="border-0 p-0" :style="{ height: `${matchWindow.paddingEnd.value}px` }" />
               </tr>
             </tbody>
           </table>
-        </div>
-
-        <div v-if="matchedRows.length > 0" class="mt-2 flex flex-wrap items-center justify-end gap-2 text-xs">
-          <label class="flex items-center gap-1">
-            <span class="whitespace-nowrap opacity-60">Số dòng</span>
-            <select
-              class="select select-xs select-bordered w-20"
-              :value="listPageSize"
-              title="Số dòng mỗi trang"
-              :disabled="busy"
-              @change="onListPageSize"
-            >
-              <option v-for="size in PAGE_SIZE_OPTIONS" :key="size" :value="size">{{ size }}</option>
-            </select>
-          </label>
-          <div class="flex items-center gap-1">
-            <button
-              type="button"
-              class="btn btn-ghost btn-xs btn-circle h-6 w-6 min-h-0"
-              title="Trang đầu"
-              :disabled="listPage <= 1 || busy"
-              @click="listPage = 1"
-            >
-              <ChevronsLeft class="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              class="btn btn-ghost btn-xs btn-circle h-6 w-6 min-h-0"
-              title="Trang trước"
-              :disabled="listPage <= 1 || busy"
-              @click="listPage -= 1"
-            >
-              <ChevronLeft class="h-3.5 w-3.5" />
-            </button>
-            <span class="px-1">Trang {{ listPage }} / {{ listPageCount }}</span>
-            <button
-              type="button"
-              class="btn btn-ghost btn-xs btn-circle h-6 w-6 min-h-0"
-              title="Trang sau"
-              :disabled="listPage >= listPageCount || busy"
-              @click="listPage += 1"
-            >
-              <ChevronRight class="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              class="btn btn-ghost btn-xs btn-circle h-6 w-6 min-h-0"
-              title="Trang cuối"
-              :disabled="listPage >= listPageCount || busy"
-              @click="listPage = listPageCount"
-            >
-              <ChevronsRight class="h-3.5 w-3.5" />
-            </button>
-          </div>
         </div>
 
         <div class="modal-action mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-base-300 pt-3">

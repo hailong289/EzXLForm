@@ -15,7 +15,9 @@ import { useWorkbookStore } from '@/stores/workbookStore'
 import { useHistory } from '@/composables/useHistory'
 import { useAppConfigStore } from '@/stores/appConfigStore'
 import { useBatchOperations } from '@/composables/useBatchOperations'
-import { physicalOf, getRow } from '@/composables/rowPageStore'
+import { physicalOf, getRow, hasSheetOrder } from '@/composables/rowPageStore'
+import { useRowMarks } from '@/composables/rowMarks'
+import { sheetRowCount } from '@/utils/sheetGrid'
 import type { ColumnHeader, BatchOperationType } from '@/types/excel'
 
 const props = defineProps<{
@@ -23,6 +25,7 @@ const props = defineProps<{
 }>()
 
 const selectionStore = useSelectionStore()
+const rowMarks = useRowMarks()
 const workbookStore = useWorkbookStore()
 const appConfigStore = useAppConfigStore()
 const { push: pushHistory } = useHistory()
@@ -108,6 +111,8 @@ async function handleDeleteSelected() {
   const sheetId = workbookStore.activeSheet.id
   const count = selectionStore.selectedCount
   const targetIndexes = [...selectionStore.selectedRowIndexes]
+  const swapTail = Boolean(workbookStore.activeSheet.paged) && !hasSheetOrder(sheetId)
+  rowMarks.noteRowsDeleted(sheetId, targetIndexes, swapTail, sheetRowCount(workbookStore.activeSheet))
   if (workbookStore.activeSheet.paged) {
     await workbookStore.deleteRows(sheetId, targetIndexes)
     selectionStore.clearSelection()

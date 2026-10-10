@@ -110,7 +110,6 @@ export interface AppSettings {
   theme: ThemeConfig
   viewMode: 'editor' | 'preview'
   splitRatio: number
-  rowsPerPage: number
   language: 'vi' | 'en'
 }
 

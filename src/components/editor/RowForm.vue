@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, watch, computed, onUnmounted, nextTick } from 'vue'
 import {
   Plus,
   Trash2,
@@ -13,6 +13,7 @@ import {
   Type,
   CheckSquare,
   CheckCircle2,
+  RefreshCw,
   Copy,
   Columns3,
   PanelLeftClose,
@@ -20,6 +21,7 @@ import {
   AlertCircle,
   Search,
   X,
+  Maximize2,
 } from 'lucide-vue-next'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import type { ColumnHeader, RowData } from '@/types/excel'
@@ -56,8 +58,35 @@ const emit = defineEmits<{
 const formData = ref<Record<string, string>>({})
 const showDeleteConfirm = ref(false)
 const jumpInput = ref<number | ''>('')
-const isRealtimeSaved = ref(false)
+type SyncUiState = 'idle' | 'syncing' | 'done'
+const syncUi = ref<SyncUiState>('idle')
 let saveIndicatorTimeout: ReturnType<typeof setTimeout> | null = null
+let syncFallbackTimeout: ReturnType<typeof setTimeout> | null = null
+let syncGeneration = 0
+let awaitingSaveAck = false
+
+function clearSyncTimers() {
+  if (saveIndicatorTimeout) clearTimeout(saveIndicatorTimeout)
+  if (syncFallbackTimeout) clearTimeout(syncFallbackTimeout)
+  saveIndicatorTimeout = null
+  syncFallbackTimeout = null
+}
+
+function resetSyncUi() {
+  clearSyncTimers()
+  awaitingSaveAck = false
+  syncUi.value = 'idle'
+}
+
+function markSyncDone() {
+  if (!awaitingSaveAck) return
+  awaitingSaveAck = false
+  syncUi.value = 'done'
+  clearSyncTimers()
+  saveIndicatorTimeout = setTimeout(() => {
+    syncUi.value = 'idle'
+  }, 1500)
+}
 
 const formFocused = ref(false)
 
@@ -89,6 +118,7 @@ function syncFormFromSelection(force = false) {
 watch(
   () => [props.sheetId, props.selectedRowIndex] as const,
   () => {
+    resetSyncUi()
     formFocused.value = false
     syncFormFromSelection(true)
   },
@@ -106,6 +136,7 @@ watch(
 watch(
   () => props.dataRevision,
   () => {
+    if (awaitingSaveAck) markSyncDone()
     syncFormFromSelection(false)
   },
 )
@@ -161,22 +192,6 @@ function visibleFieldError(key: string): string | undefined {
   return touchedFields.value.has(key) ? fieldErrors.value[key] : undefined
 }
 
-/**
- * Ghi giá trị vừa gõ rồi đẩy xuống bảng ngay.
- * Đọc từ event, vì @input có thể chạy trước khi v-model cập nhật formData.
- */
-function fitAllTextAreas() {
-  const host = gridHostRef.value
-  if (!host) return
-  host.querySelectorAll('textarea.form-text-input').forEach((node) => {
-    const area = node as HTMLTextAreaElement
-    area.style.height = '0px'
-    area.style.minHeight = '0px'
-    const next = Math.max(area.scrollHeight, 32)
-    area.style.minHeight = `${next}px`
-    area.style.height = `${next}px`
-  })
-}
 
 function datePattern(header: ColumnHeader): string {
   return header.dateFormat || DEFAULT_DATE_FORMAT
@@ -222,7 +237,7 @@ function onDatePicked(header: ColumnHeader, event: Event) {
 function onTextAreaInput(key: string, event: Event) {
   const el = event.target as HTMLTextAreaElement
   onFieldInput(key, el.value)
-  fitAllTextAreas()
+  nextTick(fitRowTextAreas)
 }
 
 function onFieldInput(key: string, raw: string) {
@@ -231,13 +246,15 @@ function onFieldInput(key: string, raw: string) {
   refreshFieldError(key)
   if (props.selectedRowIndex === null || props.selectedRow == null) return
 
+  const generation = ++syncGeneration
+  awaitingSaveAck = true
+  syncUi.value = 'syncing'
+  clearSyncTimers()
   emit('update', props.selectedRowIndex, parseFormData())
-
-  isRealtimeSaved.value = true
-  if (saveIndicatorTimeout) clearTimeout(saveIndicatorTimeout)
-  saveIndicatorTimeout = setTimeout(() => {
-    isRealtimeSaved.value = false
-  }, 1500)
+  syncFallbackTimeout = setTimeout(() => {
+    if (generation !== syncGeneration || !awaitingSaveAck) return
+    markSyncDone()
+  }, 2500)
 }
 
 function handleCreate(placement: 'after' | 'end' = 'end', kind: 'copy' | 'blank' = 'copy') {
@@ -380,12 +397,22 @@ function focusFirstField() {
 }
 
 function onJumpSubmit() {
-  if (typeof jumpInput.value === 'number' && jumpInput.value >= 1 && jumpInput.value <= props.totalRows) {
-    emit('jump-to-row', jumpInput.value - 1)
-  }
+  if (props.totalRows < 1) return
+  const value = Number(jumpInput.value)
+  if (!Number.isFinite(value)) return
+  const rowNumber = Math.min(Math.max(1, Math.floor(value)), props.totalRows)
+  jumpInput.value = rowNumber
+  emit('jump-to-row', rowNumber - 1)
+}
+
+function jumpToLastRow() {
+  if (props.totalRows < 1) return
+  jumpInput.value = props.totalRows
+  emit('jump-to-row', props.totalRows - 1)
 }
 
 const isEditMode = computed(() => props.selectedRowIndex !== null)
+const hasRows = computed(() => props.totalRows > 0)
 
 const formHeaders = computed(() => props.headers.filter((h) => h.visible !== false))
 
@@ -424,7 +451,57 @@ function optimalColumns(width: number): number {
 
 const columnCount = computed(() => optimalColumns(gridWidth.value))
 
-watch([formData, columnCount], () => nextTick(fitAllTextAreas), { deep: true })
+const FIELD_MIN_PX = 32
+const FIELD_MAX_PX = 220
+
+/** Các ô văn bản cùng hàng cao bằng nội dung dài nhất trên hàng đó. */
+function fitRowTextAreas() {
+  const host = gridHostRef.value
+  if (!host) return
+  const cards = [...host.querySelectorAll<HTMLElement>('[data-field-card]')]
+  const cols = Math.max(1, columnCount.value)
+  for (let i = 0; i < cards.length; i += cols) {
+    const areas = cards
+      .slice(i, i + cols)
+      .map((card) => card.querySelector<HTMLTextAreaElement>('textarea.form-text-input'))
+      .filter((area): area is HTMLTextAreaElement => area != null)
+    if (areas.length === 0) continue
+    areas.forEach((area) => {
+      area.style.height = '0px'
+      area.style.minHeight = '0px'
+    })
+    const tallest = Math.max(FIELD_MIN_PX, ...areas.map((area) => area.scrollHeight))
+    const next = Math.min(tallest, FIELD_MAX_PX)
+    areas.forEach((area) => {
+      area.style.minHeight = `${next}px`
+      area.style.height = `${next}px`
+    })
+  }
+}
+
+// ── Modal chỉnh sửa chi tiết ô văn bản ─────────────────────────────────────
+const modalKey = ref<string | null>(null)
+const modalDraft = ref('')
+
+const modalHeader = computed(() =>
+  modalKey.value ? props.headers.find((h) => h.key === modalKey.value) : null,
+)
+
+function openModal(key: string) {
+  modalKey.value = key
+  modalDraft.value = formData.value[key] ?? ''
+}
+
+function closeModal() {
+  modalKey.value = null
+  modalDraft.value = ''
+}
+
+function saveModal() {
+  if (!modalKey.value) return
+  onFieldInput(modalKey.value, modalDraft.value)
+  closeModal()
+}
 
 watch(
   () => props.headers.map((header) => `${header.key}:${header.dateFormat ?? ''}`).join('|'),
@@ -443,17 +520,23 @@ watch(
   },
 )
 
-onMounted(() => {
-  if (!gridHostRef.value) return
+watch([formData, columnCount], () => nextTick(fitRowTextAreas), { deep: true })
+
+watch(gridHostRef, (host) => {
+  gridObserver?.disconnect()
+  gridObserver = null
+  if (!host) return
   gridObserver = new ResizeObserver((entries) => {
     gridWidth.value = entries[0]?.contentRect.width ?? gridWidth.value
+    nextTick(fitRowTextAreas)
   })
-  gridObserver.observe(gridHostRef.value)
-  nextTick(fitAllTextAreas)
+  gridObserver.observe(host)
+  nextTick(fitRowTextAreas)
 })
 
 onUnmounted(() => {
   gridObserver?.disconnect()
+  clearSyncTimers()
 })
 </script>
 
@@ -478,24 +561,30 @@ onUnmounted(() => {
         <div>
           <div class="flex items-center gap-2">
             <h3 class="font-bold text-sm leading-none">
-              {{ isEditMode ? `Dòng #${(props.selectedRowIndex ?? 0) + 1}` : 'Tạo Dòng Mới' }}
+              {{ !hasRows ? 'Chưa có dòng' : isEditMode ? `Dòng #${(props.selectedRowIndex ?? 0) + 1}` : 'Tạo Dòng Mới' }}
             </h3>
 
-            <!-- Realtime indicator -->
             <span
-              v-if="isEditMode"
-              class="badge badge-xs font-semibold py-0.5 px-2 gap-1"
-              :class="isRealtimeSaved ? 'badge-success text-success-content' : 'badge-info'"
+              v-if="isEditMode && syncUi !== 'idle'"
+              class="inline-flex items-center justify-center rounded-md p-1"
+              :class="syncUi === 'done' ? 'bg-success/15 text-success' : 'bg-info/15 text-info'"
+              :title="syncUi === 'done' ? 'Đã lưu' : 'Đang lưu…'"
             >
-              <CheckCircle2 v-if="isRealtimeSaved" class="w-3 h-3" />
-              {{ isRealtimeSaved ? 'Đã lưu Realtime' : 'Sửa Realtime' }}
+              <CheckCircle2 v-if="syncUi === 'done'" class="w-3.5 h-3.5" />
+              <RefreshCw v-else class="w-3.5 h-3.5 animate-spin" />
             </span>
-            <span v-else class="badge badge-xs badge-primary font-semibold py-0.5 px-2">
+            <span v-else-if="hasRows" class="badge badge-xs badge-primary font-semibold py-0.5 px-2">
               Chế độ tạo mới
             </span>
           </div>
           <span class="text-[11px] opacity-60 mt-0.5 block">
-            {{ isEditMode ? 'Mũi tên sang ô bên cạnh, Ctrl+Enter sang dòng kế' : 'Nhập thông tin bên dưới và bấm "Tạo dòng mới"' }}
+            {{
+              !hasRows
+                ? 'Bấm Thêm dòng mới để bắt đầu nhập'
+                : isEditMode
+                  ? 'Mũi tên sang ô bên cạnh, Ctrl+Enter sang dòng kế'
+                  : 'Nhập thông tin bên dưới và bấm "Tạo dòng mới"'
+            }}
           </span>
         </div>
       </div>
@@ -549,12 +638,20 @@ onUnmounted(() => {
           type="number"
           min="1"
           :max="props.totalRows"
-          class="input input-xs input-bordered w-14 text-center font-bold text-xs h-6 px-1"
-          placeholder="Số..."
+          class="input input-xs input-bordered w-24 text-center font-bold text-xs h-6 px-1"
+          placeholder="Số dòng"
+          title="Nhập số dòng rồi Enter"
           @keydown.enter="onJumpSubmit"
-          @blur="onJumpSubmit"
         />
         <span class="opacity-60 text-[11px]">/ {{ props.totalRows }} dòng</span>
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs h-6 px-2 text-[11px]"
+          title="Đến dòng cuối cùng"
+          @click="jumpToLastRow"
+        >
+          Cuối
+        </button>
       </div>
 
       <!-- Prev / Next Buttons -->
@@ -580,7 +677,7 @@ onUnmounted(() => {
 
     <!-- ── Thanh tiến độ nhập liệu (chế độ tạo mới) ──────────────────────────── -->
     <div
-      v-if="!isEditMode && formHeaders.length > 0"
+      v-if="hasRows && !isEditMode && formHeaders.length > 0"
       class="px-3 py-1.5 bg-base-200/50 border-b border-base-300 flex items-center gap-2"
     >
       <span class="text-[11px] opacity-70 flex-shrink-0">Nhập liệu:</span>
@@ -594,8 +691,24 @@ onUnmounted(() => {
       </span>
     </div>
 
+    <div
+      v-if="!hasRows"
+      class="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center"
+    >
+      <p class="text-sm text-base-content/70">Sheet này chưa có dòng dữ liệu.</p>
+      <button
+        type="button"
+        class="btn btn-primary btn-sm gap-1.5"
+        title="Thêm một dòng trống"
+        @click="handleCreate('end', 'blank')"
+      >
+        <Plus class="w-4 h-4" />
+        Thêm dòng mới
+      </button>
+    </div>
+
     <!-- ── Form Inputs (Bố cục Lưới Gọn Gàng & Rộng Rãi) ────────────────────── -->
-    <div ref="gridHostRef" class="flex-1 overflow-y-auto p-4 scrollbar-thin">
+    <div v-else ref="gridHostRef" class="flex-1 overflow-y-auto p-4 scrollbar-thin">
       <div v-if="formHeaders.length > 8" class="mb-3">
         <label class="input input-bordered input-sm flex items-center gap-2 w-full">
           <Search class="w-3.5 h-3.5 opacity-50" />
@@ -641,13 +754,13 @@ onUnmounted(() => {
           :class="{ 'border-error/60': !!visibleFieldError(h.key) }"
         >
           <!-- Label & Data Type Badge -->
-          <div class="flex items-center justify-between mb-1 gap-2">
+          <div class="flex items-center justify-between mb-1 gap-2 shrink-0">
             <label :for="`field-${index}`" class="text-xs font-bold text-base-content/90 leading-tight flex items-center gap-1.5 min-w-0" :title="h.label">
               <Type v-if="h.dataType === 'text' || !h.dataType" class="w-3.5 h-3.5 text-primary opacity-70 flex-shrink-0" />
               <Hash v-else-if="h.dataType === 'number'" class="w-3.5 h-3.5 text-info opacity-70 flex-shrink-0" />
               <Calendar v-else-if="h.dataType === 'date'" class="w-3.5 h-3.5 text-warning opacity-70 flex-shrink-0" />
               <CheckSquare v-else class="w-3.5 h-3.5 text-success opacity-70 flex-shrink-0" />
-              <span class="line-clamp-2 min-w-0">{{ h.label }}</span>
+              <span class="truncate min-w-0">{{ h.label }}</span>
               <span
                 v-if="formData[h.key] !== originalData[h.key]"
                 class="w-1.5 h-1.5 rounded-full bg-warning flex-shrink-0"
@@ -655,34 +768,45 @@ onUnmounted(() => {
               />
             </label>
 
-            <span
-              v-if="h.dataType !== 'date'"
-              class="badge badge-ghost badge-xs text-[10px] uppercase font-mono opacity-50 flex-shrink-0"
-            >
-              {{ h.dataType || 'text' }}
-            </span>
-            <select
-              v-else
-              class="select select-xs select-bordered h-6 min-h-0 w-[6.5rem] text-[10px] font-mono"
-              :value="datePattern(h)"
-              title="Định dạng ngày"
-              @change="emit('set-date-format', h.key, ($event.target as HTMLSelectElement).value)"
-            >
-              <option v-for="pattern in DATE_FORMATS" :key="pattern" :value="pattern">
-                {{ pattern }}
-              </option>
-            </select>
+            <div class="flex items-center gap-1 flex-shrink-0">
+              <span
+                v-if="h.dataType !== 'date'"
+                class="badge badge-ghost badge-xs text-[10px] uppercase font-mono opacity-50"
+              >
+                {{ h.dataType || 'text' }}
+              </span>
+              <select
+                v-else
+                class="select select-xs select-bordered h-6 min-h-0 w-[6.5rem] text-[10px] font-mono"
+                :value="datePattern(h)"
+                title="Định dạng ngày"
+                @change="emit('set-date-format', h.key, ($event.target as HTMLSelectElement).value)"
+              >
+                <option v-for="pattern in DATE_FORMATS" :key="pattern" :value="pattern">
+                  {{ pattern }}
+                </option>
+              </select>
+              <!-- Expand Modal Button (chỉ hiện cho ô văn bản) -->
+              <button
+                v-if="h.dataType !== 'boolean' && h.dataType !== 'number' && h.dataType !== 'date'"
+                type="button"
+                class="inline-flex h-5 w-5 items-center justify-center rounded text-base-content/40 hover:bg-base-200 hover:text-base-content"
+                title="Mở rộng chỉnh sửa"
+                @click="openModal(h.key)"
+              >
+                <Maximize2 class="w-3 h-3" />
+              </button>
+            </div>
           </div>
 
           <!-- Input Fields (Realtime on input) -->
-          <div class="field-body mt-1.5">
+          <div class="field-body mt-1.5 min-h-0 flex-1">
             <textarea
               v-if="h.dataType !== 'boolean' && h.dataType !== 'number' && h.dataType !== 'date'"
               :id="`field-${index}`"
               :key="`${props.sheetId ?? ''}-${props.selectedRowIndex ?? 'new'}-${h.key}`"
               :value="formData[h.key]"
-              rows="1"
-              class="form-text-input textarea textarea-bordered w-full text-xs bg-base-100 rounded-lg resize-y"
+              class="form-text-input textarea textarea-bordered w-full text-xs bg-base-100 rounded-lg resize-none scrollbar-thin overflow-y-auto !min-h-0 !py-1.5 !leading-snug"
               :class="{ 'textarea-error': !!visibleFieldError(h.key) }"
               :aria-label="h.label"
               :aria-invalid="!!visibleFieldError(h.key)"
@@ -771,7 +895,10 @@ onUnmounted(() => {
     </div>
 
     <!-- ── Cụm Nút Hành Động [Tạo Dòng Mới] [Xóa Dòng] [Làm Mới] ─────────────── -->
-    <div class="p-3 bg-base-200/90 border-t border-base-300 flex items-center justify-between gap-2 flex-wrap">
+    <div
+      v-if="hasRows"
+      class="p-3 bg-base-200/90 border-t border-base-300 flex items-center justify-between gap-2 flex-wrap"
+    >
       <!-- Nút Tạo dòng mới -->
       <button
         v-if="props.rowIsNew"
@@ -853,5 +980,58 @@ onUnmounted(() => {
       confirm-text="Xóa dòng này"
       @confirm="confirmDelete"
     />
+
+    <!-- ── Modal Chỉnh Sửa Chi Tiết Ô Văn Bản ───────────────────────────────── -->
+    <dialog
+      v-if="modalKey !== null"
+      class="modal modal-open"
+      @keydown.esc.prevent="closeModal"
+    >
+      <div class="modal-box max-w-xl border border-base-300 p-0 flex flex-col max-h-[85vh] overflow-hidden">
+        <!-- Modal Header -->
+        <div class="px-5 py-3.5 border-b border-base-300 bg-base-200/60 flex items-center justify-between gap-3 flex-shrink-0">
+          <div class="flex items-center gap-2 min-w-0">
+            <Maximize2 class="w-4 h-4 opacity-60 flex-shrink-0" />
+            <h3 class="font-bold text-sm truncate">{{ modalHeader?.label }}</h3>
+            <span class="badge badge-ghost badge-xs text-[10px] uppercase font-mono opacity-50 flex-shrink-0">
+              {{ modalHeader?.dataType || 'text' }}
+            </span>
+          </div>
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs btn-square flex-shrink-0"
+            title="Đóng"
+            @click="closeModal"
+          >
+            <X class="w-4 h-4" />
+          </button>
+        </div>
+
+        <!-- Modal Body -->
+        <div class="p-5 flex-1 overflow-y-auto flex flex-col gap-3 scrollbar-thin">
+          <textarea
+            v-model="modalDraft"
+            rows="10"
+            autofocus
+            class="textarea textarea-bordered w-full text-sm bg-base-100 rounded-lg resize-y scrollbar-thin leading-relaxed"
+            :placeholder="`Nhập ${modalHeader?.label ?? ''}...`"
+          />
+          <div class="flex items-center justify-between text-[11px] text-base-content/50">
+            <span>Thay đổi sẽ cập nhật trực tiếp vào ô tương ứng trên bản ghi.</span>
+            <span class="font-semibold text-base-content/70">{{ modalDraft.length }} ký tự</span>
+          </div>
+        </div>
+
+        <!-- Modal Footer -->
+        <div class="px-5 py-3 border-t border-base-300 bg-base-200/60 flex items-center justify-end gap-2 flex-shrink-0">
+          <button type="button" class="btn btn-sm btn-ghost" @click="closeModal">Hủy bỏ</button>
+          <button type="button" class="btn btn-sm btn-primary gap-1.5" @click="saveModal">
+            <CheckCircle2 class="w-3.5 h-3.5" />
+            Lưu thay đổi
+          </button>
+        </div>
+      </div>
+      <div class="modal-backdrop bg-black/40" @click="closeModal" />
+    </dialog>
   </div>
 </template>

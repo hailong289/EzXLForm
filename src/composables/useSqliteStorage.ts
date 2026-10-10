@@ -5,6 +5,11 @@ import type { Database } from 'sql.js'
 import { saveAs } from 'file-saver'
 import type { WorkbookData, SheetData, ColumnHeader, RowData } from '@/types/excel'
 import { sheetRowCount } from '@/utils/sheetGrid'
+import {
+  applyStoredRowMarks,
+  collectRowMarksForSave,
+  type StoredRowMark,
+} from '@/composables/rowMarks'
 
 const DB_STORE_NAME = 'excel_sqlite_store'
 const DB_NAME = 'excel_editor_db'
@@ -162,7 +167,46 @@ export function useSqliteStorage() {
         row_count INTEGER,
         column_sums_json TEXT
       );
+
+      CREATE TABLE IF NOT EXISTS row_marks (
+        sheet_id TEXT NOT NULL,
+        sheet_name TEXT NOT NULL,
+        row_index INTEGER NOT NULL,
+        color TEXT NOT NULL,
+        PRIMARY KEY (sheet_id, row_index)
+      );
     `)
+  }
+
+  function readRowMarksFromDatabase(db: Database): StoredRowMark[] {
+    try {
+      const res = db.exec(
+        `SELECT sheet_id, sheet_name, row_index, color FROM row_marks ORDER BY sheet_name ASC, row_index ASC`,
+      )
+      if (!res?.[0]?.values?.length) return []
+      return res[0].values.map((row) => ({
+        sheetId: String(row[0]),
+        sheetName: String(row[1]),
+        rowIndex: Number(row[2]),
+        color: String(row[3]) as StoredRowMark['color'],
+      }))
+    } catch {
+      return []
+    }
+  }
+
+  function writeRowMarksToDatabase(db: Database, workbook: WorkbookData) {
+    try {
+      db.run(`DELETE FROM row_marks`)
+      for (const mark of collectRowMarksForSave(workbook.sheets)) {
+        db.run(
+          `INSERT INTO row_marks (sheet_id, sheet_name, row_index, color) VALUES (?, ?, ?, ?)`,
+          [mark.sheetId, mark.sheetName, mark.rowIndex, mark.color],
+        )
+      }
+    } catch {
+      // Bảng chưa có trên DB cũ — initTables đã tạo ở phiên lưu mới
+    }
   }
 
   function workbookFromDatabase(db: Database): WorkbookData | null {
@@ -360,6 +404,8 @@ export function useSqliteStorage() {
         }
       })
 
+      writeRowMarksToDatabase(db, workbook)
+
       const binaryData = db.export()
       await saveBinaryToIndexedDB(sessionKey(id), binaryData)
 
@@ -392,7 +438,10 @@ export function useSqliteStorage() {
     const db = new SQL.Database(binaryData)
     currentDb = db
     const result = workbookFromDatabase(db)
-    if (result) lastSavedAt.value = result.meta.lastModified
+    if (result) {
+      applyStoredRowMarks(result.sheets, readRowMarksFromDatabase(db))
+      lastSavedAt.value = result.meta.lastModified
+    }
     return result
   }
 
