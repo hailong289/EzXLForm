@@ -17,10 +17,14 @@ import {
   Columns3,
   PanelLeftClose,
   PanelRightOpen,
+  AlertCircle,
+  Search,
+  X,
 } from 'lucide-vue-next'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-import type { ColumnHeader, RowData, CellValue } from '@/types/excel'
+import type { ColumnHeader, RowData } from '@/types/excel'
 import { DATE_FORMATS, DEFAULT_DATE_FORMAT, formatDateValue, parseDateToIso } from '@/utils/dateFormat'
+import { coerceCellValue, coerceRowData } from '@/utils/cellValue'
 
 const props = defineProps<{
   headers: ColumnHeader[]
@@ -57,6 +61,10 @@ let saveIndicatorTimeout: ReturnType<typeof setTimeout> | null = null
 
 const formFocused = ref(false)
 
+const fieldErrors = ref<Record<string, string>>({})
+const touchedFields = ref<Set<string>>(new Set())
+const originalData = ref<Record<string, string>>({})
+
 function syncFormFromSelection(force = false) {
   if (!force && formFocused.value) return
   if (props.selectedRowIndex !== null && props.selectedRow == null) return
@@ -68,6 +76,9 @@ function syncFormFromSelection(force = false) {
       data[h.key] = h.dataType === 'date' ? formatDateValue(val, h.dateFormat) : val != null ? String(val) : ''
     })
     formData.value = data
+    originalData.value = { ...data }
+    fieldErrors.value = {}
+    touchedFields.value = new Set()
     jumpInput.value = props.selectedRowIndex + 1
   } else {
     clearForm()
@@ -118,23 +129,36 @@ function clearForm() {
     data[h.key] = ''
   })
   formData.value = data
+  originalData.value = {}
+  fieldErrors.value = {}
+  touchedFields.value = new Set()
 }
 
 function parseFormData(): RowData {
-  const result: RowData = {}
-  props.headers.forEach((h) => {
-    const raw = formData.value[h.key] ?? ''
-    let val: CellValue = raw
-    if (h.dataType === 'number') {
-      val = raw.trim() === '' ? null : Number(raw)
-    } else if (h.dataType === 'boolean') {
-      val = raw === 'true' || raw === '1'
-    } else if (h.dataType === 'date') {
-      val = raw.trim() === '' ? null : parseDateToIso(raw, h.dateFormat) ?? raw
-    }
-    result[h.key] = val
-  })
-  return result
+  return coerceRowData(formData.value, props.headers).row
+}
+
+function headerOf(key: string): ColumnHeader | undefined {
+  return props.headers.find((h) => h.key === key)
+}
+
+function refreshFieldError(key: string): void {
+  const h = headerOf(key)
+  const { error } = coerceCellValue(formData.value[key] ?? '', h?.dataType, h?.dateFormat)
+  const next = { ...fieldErrors.value }
+  if (error) next[key] = error
+  else delete next[key]
+  fieldErrors.value = next
+}
+
+function markTouched(key: string): void {
+  const next = new Set(touchedFields.value)
+  next.add(key)
+  touchedFields.value = next
+}
+
+function visibleFieldError(key: string): string | undefined {
+  return touchedFields.value.has(key) ? fieldErrors.value[key] : undefined
 }
 
 /**
@@ -164,6 +188,7 @@ function onDateInput(header: ColumnHeader, event: Event) {
 }
 
 function onDateBlur(header: ColumnHeader) {
+  markTouched(header.key)
   const raw = formData.value[header.key] ?? ''
   const formatted = formatDateValue(raw, datePattern(header))
   if (!formatted || formatted === raw) return
@@ -203,6 +228,7 @@ function onTextAreaInput(key: string, event: Event) {
 function onFieldInput(key: string, raw: string) {
   formFocused.value = true
   formData.value = { ...formData.value, [key]: raw }
+  refreshFieldError(key)
   if (props.selectedRowIndex === null || props.selectedRow == null) return
 
   emit('update', props.selectedRowIndex, parseFormData())
@@ -216,6 +242,14 @@ function onFieldInput(key: string, raw: string) {
 
 function handleCreate(placement: 'after' | 'end' = 'end', kind: 'copy' | 'blank' = 'copy') {
   if (kind === 'copy' && props.selectedRowIndex !== null && props.selectedRow == null) return
+  if (kind === 'copy') {
+    const { errors } = coerceRowData(formData.value, props.headers)
+    if (Object.keys(errors).length > 0) {
+      fieldErrors.value = errors
+      touchedFields.value = new Set(Object.keys(errors))
+      return
+    }
+  }
   const where = placement === 'after' && props.selectedRowIndex !== null ? 'after' : 'end'
   emit('create', parseFormData(), where, props.selectedRowIndex, kind)
 }
@@ -327,6 +361,22 @@ function onFormKeydown(event: KeyboardEvent) {
 function handleNewRowMode() {
   clearForm()
   emit('clear')
+  focusFirstField()
+}
+
+function focusFirstField() {
+  nextTick(() => {
+    const control = fieldControls()[0]
+    if (!control) return
+    control.focus()
+    if (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement) {
+      try {
+        control.setSelectionRange(control.value.length, control.value.length)
+      } catch {
+        /* number/checkbox không đặt được con trỏ */
+      }
+    }
+  })
 }
 
 function onJumpSubmit() {
@@ -336,6 +386,23 @@ function onJumpSubmit() {
 }
 
 const isEditMode = computed(() => props.selectedRowIndex !== null)
+
+const formHeaders = computed(() => props.headers.filter((h) => h.visible !== false))
+
+const fieldSearch = ref('')
+
+const filteredHeaders = computed(() => {
+  const q = fieldSearch.value.trim().toLowerCase()
+  if (!q) return formHeaders.value
+  return formHeaders.value.filter((h) => h.label.toLowerCase().includes(q))
+})
+
+const filledCount = computed(() =>
+  formHeaders.value.reduce(
+    (n, h) => n + ((formData.value[h.key] ?? '').trim() !== '' ? 1 : 0),
+    0,
+  ),
+)
 
 const gridHostRef = ref<HTMLElement | null>(null)
 const gridWidth = ref(520)
@@ -511,10 +578,54 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <!-- ── Thanh tiến độ nhập liệu (chế độ tạo mới) ──────────────────────────── -->
+    <div
+      v-if="!isEditMode && formHeaders.length > 0"
+      class="px-3 py-1.5 bg-base-200/50 border-b border-base-300 flex items-center gap-2"
+    >
+      <span class="text-[11px] opacity-70 flex-shrink-0">Nhập liệu:</span>
+      <progress
+        class="progress progress-primary flex-1 h-2"
+        :value="filledCount"
+        :max="formHeaders.length"
+      />
+      <span class="text-[11px] opacity-60 font-semibold flex-shrink-0">
+        {{ filledCount }}/{{ formHeaders.length }}
+      </span>
+    </div>
+
     <!-- ── Form Inputs (Bố cục Lưới Gọn Gàng & Rộng Rãi) ────────────────────── -->
     <div ref="gridHostRef" class="flex-1 overflow-y-auto p-4 scrollbar-thin">
-      <div v-if="props.headers.length === 0" class="flex flex-col items-center justify-center h-48 opacity-50 text-xs">
+      <div v-if="formHeaders.length > 8" class="mb-3">
+        <label class="input input-bordered input-sm flex items-center gap-2 w-full">
+          <Search class="w-3.5 h-3.5 opacity-50" />
+          <input
+            v-model="fieldSearch"
+            type="text"
+            class="grow text-xs bg-transparent"
+            placeholder="Tìm cột trong form..."
+            aria-label="Tìm cột trong form"
+          />
+          <button
+            v-if="fieldSearch"
+            type="button"
+            class="btn btn-ghost btn-xs btn-circle"
+            title="Xóa tìm kiếm"
+            @click="fieldSearch = ''"
+          >
+            <X class="w-3 h-3" />
+          </button>
+        </label>
+      </div>
+
+      <div v-if="formHeaders.length === 0" class="flex flex-col items-center justify-center h-48 opacity-50 text-xs">
         Sheet này chưa có cột dữ liệu nào.
+      </div>
+      <div
+        v-else-if="filteredHeaders.length === 0"
+        class="flex flex-col items-center justify-center h-48 opacity-50 text-xs"
+      >
+        Không tìm thấy cột khớp với "{{ fieldSearch }}".
       </div>
 
       <div
@@ -523,19 +634,25 @@ onUnmounted(() => {
         :style="{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }"
       >
         <div
-          v-for="h in props.headers"
+          v-for="(h, index) in filteredHeaders"
           :key="h.key"
           data-field-card
           class="bg-base-100 hover:bg-base-200/40 transition-colors p-3 rounded-xl border border-base-300 shadow-sm flex flex-col"
+          :class="{ 'border-error/60': !!visibleFieldError(h.key) }"
         >
           <!-- Label & Data Type Badge -->
           <div class="flex items-center justify-between mb-1 gap-2">
-            <label class="text-xs font-bold text-base-content/90 leading-tight flex items-center gap-1.5 min-w-0" :title="h.label">
+            <label :for="`field-${index}`" class="text-xs font-bold text-base-content/90 leading-tight flex items-center gap-1.5 min-w-0" :title="h.label">
               <Type v-if="h.dataType === 'text' || !h.dataType" class="w-3.5 h-3.5 text-primary opacity-70 flex-shrink-0" />
               <Hash v-else-if="h.dataType === 'number'" class="w-3.5 h-3.5 text-info opacity-70 flex-shrink-0" />
               <Calendar v-else-if="h.dataType === 'date'" class="w-3.5 h-3.5 text-warning opacity-70 flex-shrink-0" />
               <CheckSquare v-else class="w-3.5 h-3.5 text-success opacity-70 flex-shrink-0" />
               <span class="line-clamp-2 min-w-0">{{ h.label }}</span>
+              <span
+                v-if="formData[h.key] !== originalData[h.key]"
+                class="w-1.5 h-1.5 rounded-full bg-warning flex-shrink-0"
+                title="Đã thay đổi"
+              />
             </label>
 
             <span
@@ -561,19 +678,29 @@ onUnmounted(() => {
           <div class="field-body mt-1.5">
             <textarea
               v-if="h.dataType !== 'boolean' && h.dataType !== 'number' && h.dataType !== 'date'"
+              :id="`field-${index}`"
               :key="`${props.sheetId ?? ''}-${props.selectedRowIndex ?? 'new'}-${h.key}`"
               :value="formData[h.key]"
               rows="1"
               class="form-text-input textarea textarea-bordered w-full text-xs bg-base-100 rounded-lg resize-y"
+              :class="{ 'textarea-error': !!visibleFieldError(h.key) }"
+              :aria-label="h.label"
+              :aria-invalid="!!visibleFieldError(h.key)"
               :placeholder="`Nhập ${h.label}...`"
               @input="onTextAreaInput(h.key, $event)"
+              @blur="markTouched(h.key)"
             />
             <div v-else-if="h.dataType === 'date'" class="relative w-full">
               <input
                 type="text"
+                :id="`field-${index}`"
                 class="form-text-input input input-bordered w-full text-xs bg-base-100 rounded-lg pr-8"
+                :class="{ 'input-error': !!visibleFieldError(h.key) }"
                 :value="formData[h.key]"
+                :aria-label="h.label"
+                :aria-invalid="!!visibleFieldError(h.key)"
                 :placeholder="datePattern(h)"
+                :title="`Ngày theo định dạng ${datePattern(h)}`"
                 @input="onDateInput(h, $event)"
                 @blur="onDateBlur(h)"
                 @keydown.enter="!isEditMode && handleCreate()"
@@ -581,7 +708,8 @@ onUnmounted(() => {
               <button
                 type="button"
                 class="absolute right-1 top-1/2 -translate-y-1/2 btn btn-ghost btn-xs btn-square min-h-0 h-6 w-6"
-                title="Chọn ngày"
+                :title="`Chọn ngày cho ${h.label}`"
+                :aria-label="`Chọn ngày cho ${h.label}`"
                 @click="openDatePicker(h)"
               >
                 <Calendar class="w-3.5 h-3.5" />
@@ -596,11 +724,17 @@ onUnmounted(() => {
             </div>
             <input
               v-else-if="h.dataType !== 'boolean'"
+              :id="`field-${index}`"
               :value="formData[h.key]"
               :type="h.dataType === 'number' ? 'number' : 'text'"
               class="form-text-input input input-bordered w-full text-xs bg-base-100 rounded-lg"
+              :class="{ 'input-error': !!visibleFieldError(h.key) }"
+              :aria-label="h.label"
+              :aria-invalid="!!visibleFieldError(h.key)"
               :placeholder="`Nhập ${h.label}...`"
+              :title="'Nhập số, dùng dấu chấm cho phần thập phân'"
               @input="onFieldInput(h.key, ($event.target as HTMLInputElement).value)"
+              @blur="markTouched(h.key)"
               @keydown.enter="!isEditMode && handleCreate()"
             />
 
@@ -613,6 +747,7 @@ onUnmounted(() => {
                 type="checkbox"
                 class="checkbox checkbox-sm checkbox-primary"
                 :checked="formData[h.key] === 'true' || formData[h.key] === '1'"
+                :aria-label="h.label"
                 @change="
                   onFieldInput(h.key, ($event.target as HTMLInputElement).checked ? 'true' : 'false')
                 "
@@ -622,6 +757,15 @@ onUnmounted(() => {
               </span>
             </label>
           </div>
+
+          <!-- Error message -->
+          <p
+            v-if="visibleFieldError(h.key)"
+            class="flex items-start gap-1 text-[10px] text-error mt-1.5 leading-tight"
+          >
+            <AlertCircle class="w-3 h-3 flex-shrink-0 mt-px" />
+            {{ visibleFieldError(h.key) }}
+          </p>
         </div>
       </div>
     </div>
