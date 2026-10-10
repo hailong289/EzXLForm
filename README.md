@@ -2,6 +2,8 @@
 
 Ứng dụng chỉnh sửa file Excel hiện đại, xây dựng với Vue 3 + DaisyUI + Tauri.
 
+Cách dùng từng chức năng nằm trong [CHUC-NANG.md](CHUC-NANG.md).
+
 ## Tính năng
 
 - 📂 **Import/Export** — Hỗ trợ `.xlsx`, `.xls`, `.csv` với giữ nguyên định dạng
