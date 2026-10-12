@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
-import { Palette, Check, RotateCcw, Type, Minus, Plus } from 'lucide-vue-next'
-import { useTheme } from '@/composables/useTheme'
+import { Palette, Check, RotateCcw, Type, Minus, Plus, Monitor } from 'lucide-vue-next'
+import { SYSTEM_THEME, useTheme } from '@/composables/useTheme'
 
 const {
   currentTheme,
+  themeLabel,
   fontSize,
   fontSizeOptions,
   customColors,
   availableThemes,
-  applyTheme,
+  chooseTheme,
   applyFontSize,
   stepFontSize,
   fontSizeMin,
@@ -61,7 +62,7 @@ function onResetColors() {
 }
 
 function pickTheme(name: string) {
-  applyTheme(name)
+  chooseTheme(name)
   close()
 }
 </script>
@@ -74,7 +75,7 @@ function pickTheme(name: string) {
     @click="toggle"
   >
     <Palette class="w-3.5 h-3.5 text-primary" />
-    <span class="hidden lg:inline capitalize text-xs font-normal">{{ currentTheme }}</span>
+    <span class="hidden lg:inline text-xs font-normal">{{ themeLabel }}</span>
   </button>
 
   <Teleport to="body">
@@ -155,6 +156,16 @@ function pickTheme(name: string) {
       </div>
 
       <div v-else class="flex flex-col gap-0.5">
+        <button
+          type="button"
+          class="btn btn-xs justify-start h-8 px-2 font-normal text-xs"
+          :class="currentTheme === SYSTEM_THEME ? 'btn-primary' : 'btn-ghost'"
+          @click="pickTheme(SYSTEM_THEME)"
+        >
+          <Monitor class="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
+          <span class="truncate flex-1 text-left ml-1.5">Theo hệ thống</span>
+          <Check v-if="currentTheme === SYSTEM_THEME" class="w-3 h-3 flex-shrink-0" />
+        </button>
         <button
           v-for="th in availableThemes"
           :key="th.name"

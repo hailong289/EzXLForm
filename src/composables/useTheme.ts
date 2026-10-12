@@ -44,6 +44,8 @@ export const AVAILABLE_THEMES: ThemeItem[] = [
 ]
 
 const THEME_STORAGE_KEY = 'excel_editor_theme'
+const THEME_CHOSEN_KEY = 'excel_editor_theme_chosen'
+export const SYSTEM_THEME = 'system'
 const COLORS_STORAGE_KEY = 'excel_editor_custom_colors'
 const FONT_STORAGE_KEY = 'excel_editor_font_size'
 
@@ -57,7 +59,17 @@ export const FONT_SIZE_OPTIONS = [
 export const FONT_SIZE_MIN = 12
 export const FONT_SIZE_MAX = 32
 
-const currentTheme = ref<string>('dark')
+const currentTheme = ref<string>(SYSTEM_THEME)
+const prefersDark = ref(false)
+
+function systemPrefersDark(): boolean {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches
+}
+
+function resolvedThemeName(themeName: string): string {
+  if (themeName !== SYSTEM_THEME) return themeName
+  return prefersDark.value ? 'dark' : 'light'
+}
 const fontSize = ref(16)
 const customColors = ref<{ primary: string; secondary: string; accent: string }>({
   primary: '#217346',
@@ -107,13 +119,20 @@ function hexToHsl(hex: string): string {
 
 export function useTheme() {
   const isDarkTheme = computed(() => {
+    if (currentTheme.value === SYSTEM_THEME) return prefersDark.value
     const found = AVAILABLE_THEMES.find((t) => t.name === currentTheme.value)
-    return found ? found.isDark : true
+    return found ? found.isDark : prefersDark.value
+  })
+
+  const themeLabel = computed(() => {
+    if (currentTheme.value === SYSTEM_THEME) return 'Hệ thống'
+    return AVAILABLE_THEMES.find((t) => t.name === currentTheme.value)?.label ?? currentTheme.value
   })
 
   function applyTheme(themeName: string) {
+    prefersDark.value = systemPrefersDark()
     currentTheme.value = themeName
-    document.documentElement.setAttribute('data-theme', themeName)
+    document.documentElement.setAttribute('data-theme', resolvedThemeName(themeName))
     try {
       localStorage.setItem(THEME_STORAGE_KEY, themeName)
     } catch {
@@ -179,14 +198,20 @@ export function useTheme() {
     applyFontSize(fontSize.value + delta)
   }
 
+  function chooseTheme(themeName: string) {
+    try {
+      localStorage.setItem(THEME_CHOSEN_KEY, '1')
+    } catch {
+      // ignore storage error
+    }
+    applyTheme(themeName)
+  }
+
   function loadSavedTheme() {
     try {
+      const chosen = localStorage.getItem(THEME_CHOSEN_KEY) === '1'
       const savedTheme = localStorage.getItem(THEME_STORAGE_KEY)
-      if (savedTheme) {
-        applyTheme(savedTheme)
-      } else {
-        applyTheme('dark')
-      }
+      applyTheme(chosen && savedTheme ? savedTheme : SYSTEM_THEME)
 
       const savedColors = localStorage.getItem(COLORS_STORAGE_KEY)
       if (savedColors) {
@@ -197,18 +222,20 @@ export function useTheme() {
       const savedFont = Number(localStorage.getItem(FONT_STORAGE_KEY))
       applyFontSize(savedFont || 16)
     } catch {
-      applyTheme('dark')
+      applyTheme(SYSTEM_THEME)
     }
   }
 
   return {
     currentTheme,
+    themeLabel,
     fontSize,
     fontSizeOptions: FONT_SIZE_OPTIONS,
     customColors,
     availableThemes: AVAILABLE_THEMES,
     isDarkTheme,
     applyTheme,
+    chooseTheme,
     applyFontSize,
     stepFontSize,
     fontSizeMin: FONT_SIZE_MIN,
@@ -218,4 +245,13 @@ export function useTheme() {
     loadSavedTheme,
     hexToHsl,
   }
+}
+
+if (typeof window !== 'undefined') {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    prefersDark.value = systemPrefersDark()
+    if (currentTheme.value === SYSTEM_THEME) {
+      document.documentElement.setAttribute('data-theme', resolvedThemeName(SYSTEM_THEME))
+    }
+  })
 }

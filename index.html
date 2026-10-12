@@ -5,6 +5,14 @@
     <link rel="icon" type="image/svg+xml" href="/excel-icon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Excel Editor</title>
+    <script>
+      try {
+        var chosen = localStorage.getItem('excel_editor_theme_chosen') === '1'
+        var saved = localStorage.getItem('excel_editor_theme')
+        var theme = chosen && saved && saved !== 'system' ? saved : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+        document.documentElement.setAttribute('data-theme', theme)
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="app"></div>
