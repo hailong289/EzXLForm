@@ -530,13 +530,11 @@ function cellXml(column: number, excelRow: number, value: CellValue, header: Col
 const STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><fills count="1"><fill><patternFill patternType="none"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="1"><xf/></cellXfs></styleSheet>`
 
-async function writePagedXlsx(workbook: WorkbookData, filename: string, onProgress: (message: string) => void): Promise<void> {
-  const sink = await openSaveStream(
-    filename,
-    'Excel',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    '.xlsx',
-  )
+async function writePagedXlsxToSink(
+  workbook: WorkbookData,
+  sink: SaveSink,
+  onProgress: (message: string) => void,
+): Promise<void> {
   const zip = new StoredZipWriter((chunk) => sink.write(chunk))
   const overrides = workbook.sheets
     .map(
@@ -606,6 +604,34 @@ async function writePagedXlsx(workbook: WorkbookData, filename: string, onProgre
 
   await zip.close()
   await sink.close()
+}
+
+async function writePagedXlsx(workbook: WorkbookData, filename: string, onProgress: (message: string) => void): Promise<void> {
+  const sink = await openSaveStream(
+    filename,
+    'Excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.xlsx',
+  )
+  await writePagedXlsxToSink(workbook, sink, onProgress)
+}
+
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+/** Gom file lớn thành blob để tải lên cloud. File rất lớn có thể vượt bộ nhớ trình duyệt. */
+export async function buildPagedXlsxBlob(
+  workbook: WorkbookData,
+  onProgress: (message: string) => void,
+): Promise<Blob> {
+  const chunks: BlobPart[] = []
+  const sink: SaveSink = {
+    write: async (chunk) => {
+      chunks.push(chunk)
+    },
+    close: async () => {},
+  }
+  await writePagedXlsxToSink(workbook, sink, onProgress)
+  return new Blob(chunks, { type: XLSX_MIME })
 }
 
 async function writePagedCsv(sheet: SheetData, filename: string, onProgress: (message: string) => void): Promise<void> {

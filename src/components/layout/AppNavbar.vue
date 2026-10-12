@@ -5,7 +5,7 @@
  * Bao gồm: Logo, thao tác file (Mở/Xuất), chuyển View Mode,
  * nút Undo/Redo, tìm kiếm, và ThemeDropdown.
  */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import {
   Upload,
   Download,
@@ -23,12 +23,15 @@ import {
   Files,
   CircleHelp,
   X,
+  HardDrive,
+  Cloud,
 } from 'lucide-vue-next'
 import { useWorkbookStore } from '@/stores/workbookStore'
 import { useAppConfigStore } from '@/stores/appConfigStore'
 import { useProgressTaskStore, canPauseTask, canRemoveTask, canResumeTask, taskStatusBadgeClass, taskStatusLabel } from '@/stores/progressTaskStore'
 import { useHistory } from '@/composables/useHistory'
 import { useSqliteStorage } from '@/composables/useSqliteStorage'
+import { useCloudBindings } from '@/cloud/bindings'
 import ThemeDropdown from '@/components/common/ThemeDropdown.vue'
 import HelpGuide from '@/components/modals/HelpGuide.vue'
 
@@ -54,6 +57,10 @@ const emit = defineEmits<{
   'undo': []
   /** Làm lại thao tác vừa hoàn tác */
   'redo': []
+  /** Mở Google Drive hoặc OneDrive */
+  'open-cloud': [provider: 'google' | 'microsoft']
+  /** Ghi workbook hiện tại lên file cloud đang gắn */
+  'save-cloud': []
 }>()
 
 // ─── Stores & Composables ────────────────────────────────────────────────────
@@ -62,6 +69,8 @@ const appConfigStore = useAppConfigStore()
 const progressStore = useProgressTaskStore()
 const { canUndo, canRedo, undoDescription, redoDescription } = useHistory()
 const { sessions, activeSessionId } = useSqliteStorage()
+const { bindingFor, cloudSyncing } = useCloudBindings()
+const cloudBinding = computed(() => bindingFor(activeSessionId.value))
 
 // ─── Refs ────────────────────────────────────────────────────────────────────
 /** Hidden file input element */
@@ -131,15 +140,40 @@ function onFileSelected(event: Event) {
         <span class="font-semibold text-sm hidden md:inline">Excel Editor</span>
       </button>
 
-      <!-- Nút Mở File -->
-      <button
-        class="btn btn-ghost btn-xs gap-1"
-        title="Mở file Excel (.xlsx, .xls, .csv)"
-        @click="openFilePicker"
-      >
-        <Upload class="w-3.5 h-3.5" />
-        <span class="hidden md:inline">Mở File</span>
-      </button>
+      <div class="dropdown dropdown-bottom">
+        <button
+          tabindex="0"
+          class="btn btn-ghost btn-xs gap-1"
+          title="Mở file từ máy hoặc cloud"
+        >
+          <Upload class="w-3.5 h-3.5" />
+          <span class="hidden md:inline">Mở</span>
+          <ChevronDown class="w-3 h-3" />
+        </button>
+        <ul
+          tabindex="0"
+          class="dropdown-content menu bg-base-100 rounded-box z-50 mt-1 w-52 p-1 shadow-lg border border-base-300"
+        >
+          <li>
+            <button class="text-sm gap-2" @click="openFilePicker(); closeMenus()">
+              <HardDrive class="w-3.5 h-3.5" />
+              Từ máy tính
+            </button>
+          </li>
+          <li>
+            <button class="text-sm gap-2" @click="emit('open-cloud', 'google'); closeMenus()">
+              <Cloud class="w-3.5 h-3.5" />
+              Google Drive
+            </button>
+          </li>
+          <li>
+            <button class="text-sm gap-2" @click="emit('open-cloud', 'microsoft'); closeMenus()">
+              <FileSpreadsheet class="w-3.5 h-3.5" />
+              OneDrive
+            </button>
+          </li>
+        </ul>
+      </div>
 
       <!-- Menu phiên các file đã mở -->
       <div class="dropdown dropdown-bottom">
@@ -280,6 +314,13 @@ function onFileSelected(event: Event) {
         >
           SQLite Saved
         </span>
+        <span
+          v-if="cloudBinding"
+          class="badge badge-xs badge-info badge-outline text-[10px] hidden lg:inline-flex"
+          :title="cloudBinding.mode === 'live' ? 'Đang gắn chế độ đọc/ghi ô' : 'Đang gắn file cloud'"
+        >
+          {{ cloudBinding.provider === 'google' ? 'Google' : 'OneDrive' }}
+        </span>
       </div>
     </div>
 
@@ -335,6 +376,18 @@ function onFileSelected(event: Event) {
 
       <!-- Divider -->
       <div class="w-px h-5 bg-base-300 mx-1" />
+
+      <button
+        v-if="cloudBinding"
+        class="btn btn-ghost btn-xs gap-1"
+        :disabled="cloudSyncing"
+        title="Đồng bộ lên cloud"
+        @click="emit('save-cloud')"
+      >
+        <span v-if="cloudSyncing" class="loading loading-spinner loading-xs" />
+        <Cloud v-else class="w-3.5 h-3.5" />
+        <span class="hidden md:inline">Đồng bộ</span>
+      </button>
 
       <!-- Nút Find & Replace -->
       <button

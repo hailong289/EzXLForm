@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted } from 'vue'
-import { FileSpreadsheet, Upload, Sparkles } from 'lucide-vue-next'
+import { FileSpreadsheet, Sparkles, HardDrive, Cloud } from 'lucide-vue-next'
 import AppNavbar from '@/components/layout/AppNavbar.vue'
 import SheetTabsBar from '@/components/sheets/SheetTabsBar.vue'
 import StatusBar from '@/components/layout/StatusBar.vue'
@@ -19,6 +19,11 @@ import { LARGE_FILE_BYTES, isImportStopped } from '@/composables/importLargeWork
 import { useTheme } from '@/composables/useTheme'
 import { useHistory } from '@/composables/useHistory'
 import { useSqliteStorage } from '@/composables/useSqliteStorage'
+import CloudBrowserModal from '@/components/modals/CloudBrowserModal.vue'
+import { useCloudBindings } from '@/cloud/bindings'
+import { pendingCloudDelta, rememberCloudBaseline, remoteRevision, writeCloudWorkbook, writesCellValues } from '@/cloud/sync'
+import type { CloudBinding, CloudProviderId } from '@/cloud/types'
+import type { CloudOpenResult } from '@/cloud/sync'
 import { clearAllRowMarks, rowMarksRevision } from '@/composables/rowMarks'
 import { syncBodyRows } from '@/utils/sheetGrid'
 import { debounce } from 'lodash-es'
@@ -41,6 +46,7 @@ const {
   activeSessionId,
   sessions,
 } = useSqliteStorage()
+const { bindingFor, setBinding, clearBinding, cloudSyncing } = useCloudBindings()
 
 // Tự động lưu phiên làm việc vào SQLite mỗi khi dữ liệu thay đổi
 const debouncedSaveSqlite = debounce(async () => {
@@ -81,15 +87,127 @@ watch(rowMarksRevision, () => {
   if (workbookStore.workbook) debouncedSaveSqlite()
 })
 
+const CLOUD_SYNC_DELAY_MS = 1000
+let cloudSyncPaused = false
+let cloudQueuedManual = false
+let cloudQueued = false
+let cloudEditTick = 0
+
+const debouncedCloudSync = debounce(() => {
+  void runCloudSync(false)
+}, CLOUD_SYNC_DELAY_MS)
+
+function scheduleCloudSync() {
+  if (!workbookStore.isDirty || cloudSyncPaused) return
+  if (!bindingFor(activeSessionId.value)) return
+  cloudEditTick += 1
+  debouncedCloudSync()
+}
+
+watch(
+  () => workbookStore.workbook,
+  () => {
+    scheduleCloudSync()
+  },
+  { deep: true },
+)
+
+async function saveCloudOnce(manual: boolean): Promise<'ok' | 'fail' | 'skip'> {
+  const sessionId = activeSessionId.value
+  const binding = bindingFor(sessionId)
+  const workbook = workbookStore.workbook
+  const editTick = cloudEditTick
+  if (!sessionId || !binding || !workbook) return 'skip'
+  const remote = await remoteRevision(binding)
+  if (activeSessionId.value !== sessionId) return 'skip'
+  const cellPatch = pendingCloudDelta(sessionId, workbook).kind === 'rows'
+  if (!cellPatch && remote && binding.revision && remote !== binding.revision) {
+    if (!manual) throw new Error('File trên cloud đã đổi kể từ lần đồng bộ')
+    const overwrite = window.confirm('File trên cloud đã đổi kể từ lần đồng bộ. Ghi đè bản trên cloud?')
+    if (!overwrite) return 'skip'
+  }
+  const revision = await writeCloudWorkbook(binding, workbook, sessionId)
+  if (activeSessionId.value !== sessionId) return 'skip'
+  setBinding(sessionId, { ...binding, revision })
+  if (editTick === cloudEditTick) workbookStore.isDirty = false
+  if (manual) {
+    appConfigStore.addToast({
+      type: 'success',
+      message: writesCellValues(binding)
+        ? `Đã ghi giá trị ô lên ${binding.file.name}`
+        : `Đã ghi đè ${binding.file.name} trên cloud`,
+    })
+  }
+  return 'ok'
+}
+
+async function runCloudSync(manual: boolean) {
+  if (manual) {
+    debouncedCloudSync.cancel()
+    cloudSyncPaused = false
+  } else if (cloudSyncPaused) {
+    return
+  }
+  if (cloudSyncing.value) {
+    cloudQueued = true
+    cloudQueuedManual = cloudQueuedManual || manual
+    return
+  }
+  cloudSyncing.value = true
+  let failure = ''
+  try {
+    let result: 'ok' | 'fail' | 'skip' = 'fail'
+    try {
+      result = await saveCloudOnce(manual)
+    } catch (err: unknown) {
+      failure = err instanceof Error ? err.message : 'Lỗi lưu lên cloud'
+      result = 'fail'
+    }
+    if (result === 'fail') {
+      await new Promise((resolve) => setTimeout(resolve, 600))
+      try {
+        result = await saveCloudOnce(manual)
+      } catch (err: unknown) {
+        failure = err instanceof Error ? err.message : 'Lỗi lưu lên cloud'
+        result = 'fail'
+      }
+    }
+    if (result === 'fail') {
+      cloudSyncPaused = true
+      appConfigStore.addToast({
+        type: 'error',
+        message: failure
+          ? `${failure} Đã dừng đồng bộ. Bấm Đồng bộ cạnh ô tìm kiếm để thử lại.`
+          : 'Đã dừng đồng bộ cloud. Bấm Đồng bộ cạnh ô tìm kiếm để thử lại.',
+      })
+    }
+  } finally {
+    cloudSyncing.value = false
+    const queuedManual = cloudQueuedManual
+    const queued = cloudQueued
+    cloudQueued = false
+    cloudQueuedManual = false
+    if (queued && !cloudSyncPaused) void runCloudSync(queuedManual)
+  }
+}
+
 // Modal states
 const showFindReplace = ref(false)
 const showImportOptions = ref(false)
+const showCloud = ref(false)
+const cloudProvider = ref<CloudProviderId>('google')
 const pendingFile = ref<File | null>(null)
+const pendingCloud = ref<CloudBinding | null>(null)
 const isDraggingOver = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const showIntro = ref(true)
 
 // ─── File Handling ──────────────────────────────────────────────────────────
+
+function openCloud(provider: CloudProviderId) {
+  cloudProvider.value = provider
+  showCloud.value = true
+}
 
 function triggerFileInput() {
   fileInputRef.value?.click()
@@ -122,15 +240,26 @@ function handleDrop(e: DragEvent) {
   }
 }
 
-function promptImportOptions(file: File) {
+function promptImportOptions(file: File, binding: CloudBinding | null = null) {
+  pendingCloud.value = binding
   pendingFile.value = file
   showImportOptions.value = true
 }
 
+function onImportVisibility(open: boolean) {
+  showImportOptions.value = open
+  if (!open && pendingFile.value) {
+    pendingFile.value = null
+    pendingCloud.value = null
+  }
+}
+
 async function handleImportConfirm(options: ImportOptions) {
   const file = pendingFile.value
+  const binding = pendingCloud.value
   if (!file) return
   pendingFile.value = null
+  pendingCloud.value = null
 
   const extension = file.name.split('.').pop()?.toLowerCase()
   const large = (extension === 'xlsx' || extension === 'csv') && file.size >= LARGE_FILE_BYTES
@@ -141,27 +270,30 @@ async function handleImportConfirm(options: ImportOptions) {
       sheetId: '',
       kind: 'import',
     })
-    importJobs.set(taskId, { file, options })
+    importJobs.set(taskId, { file, options, binding })
     void pumpImports()
     return
   }
 
   try {
     const wb = await readExcelFile(file, options)
-    await openImportedWorkbook(file.name, wb)
+    await openImportedWorkbook(file.name, wb, binding)
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Lỗi khi mở file'
     appConfigStore.addToast({ type: 'error', message: msg })
   }
 }
 
-const importJobs = new Map<string, { file: File; options: ImportOptions }>()
+const importJobs = new Map<string, { file: File; options: ImportOptions; binding: CloudBinding | null }>()
 const runningImports = new Set<string>()
 
-async function openImportedWorkbook(fileName: string, wb: WorkbookData) {
+async function openImportedWorkbook(fileName: string, wb: WorkbookData, binding?: CloudBinding | null) {
   await flushCurrentSession()
-  adoptSessionForFile(fileName)
+  const sessionId = adoptSessionForFile(fileName)
+  if (binding) setBinding(sessionId, binding)
+  else clearBinding(sessionId)
   workbookStore.setWorkbook(wb)
+  if (binding) rememberCloudBaseline(sessionId, wb)
   clearAllRowMarks()
   appConfigStore.clearSearch()
   const bigRows = wb.sheets.reduce(
@@ -191,7 +323,7 @@ async function pumpImports() {
   }
 }
 
-async function runLargeImport(taskId: string, job: { file: File; options: ImportOptions }) {
+async function runLargeImport(taskId: string, job: { file: File; options: ImportOptions; binding: CloudBinding | null }) {
   const signal = progressStore.signal(taskId)
   if (!signal) return
   progressStore.setStatus(taskId, 'running')
@@ -212,7 +344,7 @@ async function runLargeImport(taskId: string, job: { file: File; options: Import
     if (!progressStore.tasks.some((task) => task.id === taskId)) return
     progressStore.setPercent(taskId, 100)
     progressStore.setStatus(taskId, 'done')
-    await openImportedWorkbook(job.file.name, wb)
+    await openImportedWorkbook(job.file.name, wb, job.binding)
   } catch (err: unknown) {
     if (isImportStopped(err)) {
       if (progressStore.tasks.some((task) => task.id === taskId)) {
@@ -227,6 +359,19 @@ async function runLargeImport(taskId: string, job: { file: File; options: Import
     const msg = err instanceof Error ? err.message : 'Lỗi khi mở file'
     appConfigStore.addToast({ type: 'error', message: msg })
   }
+}
+
+function onCloudOpened(result: CloudOpenResult) {
+  if (result.workbook) {
+    void openImportedWorkbook(result.workbook.meta.fileName, result.workbook, result.binding)
+    return
+  }
+  if (!result.file) return
+  promptImportOptions(result.file, result.binding)
+}
+
+function handleSaveCloud() {
+  void runCloudSync(true)
 }
 
 async function handleExportXlsx() {
@@ -312,7 +457,8 @@ function loadSampleData() {
   }
 
   void flushCurrentSession().then(() => {
-    adoptSessionForFile(sampleWb.meta.fileName)
+    const sessionId = adoptSessionForFile(sampleWb.meta.fileName)
+    clearBinding(sessionId)
     workbookStore.setWorkbook(sampleWb)
     appConfigStore.addToast({
       type: 'success',
@@ -375,10 +521,12 @@ async function handleDeleteSession(id: string) {
   const wasActive = activeSessionId.value === id
   if (!wasActive) {
     await deleteFileSession(id)
+    clearBinding(id)
     return
   }
   debouncedSaveSqlite.cancel()
   await deleteFileSession(id)
+  clearBinding(id)
   if (activeSessionId.value) {
     const wb = await loadSessionById(activeSessionId.value)
     if (wb) {
@@ -502,6 +650,8 @@ function handleHistoryRedo() {
       @go-home="handleGoHome"
       @undo="handleHistoryUndo"
       @redo="handleHistoryRedo"
+      @open-cloud="openCloud"
+      @save-cloud="handleSaveCloud"
     />
 
     <!-- Main Content Area -->
@@ -523,7 +673,7 @@ function handleHistoryRedo() {
               ? 'border-primary bg-primary/10 scale-102 shadow-xl'
               : 'border-base-300 hover:border-primary/50 hover:bg-base-200/50'
           "
-          @click="triggerFileInput"
+          @click.stop
         >
           <div class="p-4 bg-primary/10 rounded-full text-primary">
             <FileSpreadsheet class="w-12 h-12" />
@@ -532,13 +682,21 @@ function handleHistoryRedo() {
           <div>
             <h2 class="text-lg font-bold">Kéo thả file Excel vào đây</h2>
             <p class="text-xs opacity-60 mt-1">
-              Hỗ trợ các định dạng .xlsx, .xls, .csv với nhiều sheets
+              Hoặc chọn một nguồn bên dưới. Máy tính nhận .xlsx, .xls, .csv.
             </p>
           </div>
 
-          <button class="btn btn-primary btn-sm gap-2">
-            <Upload class="w-4 h-4" /> Chọn tệp từ máy tính
-          </button>
+          <div class="flex flex-wrap justify-center gap-2">
+            <button type="button" class="btn btn-primary btn-sm gap-2" @click="triggerFileInput">
+              <HardDrive class="w-4 h-4" /> Máy tính
+            </button>
+            <button type="button" class="btn btn-outline btn-sm gap-2" @click="openCloud('google')">
+              <Cloud class="w-4 h-4" /> Google Drive
+            </button>
+            <button type="button" class="btn btn-outline btn-sm gap-2" @click="openCloud('microsoft')">
+              <FileSpreadsheet class="w-4 h-4" /> OneDrive
+            </button>
+          </div>
         </div>
 
         <div v-if="sessions.length" class="mt-6 w-full max-w-md text-left" @click.stop>
@@ -611,7 +769,9 @@ function handleHistoryRedo() {
     <ImportOptionsModal
       v-model="showImportOptions"
       :file-name="pendingFile?.name || ''"
+      @update:model-value="onImportVisibility"
       @confirm="handleImportConfirm"
     />
+    <CloudBrowserModal v-model="showCloud" :provider-id="cloudProvider" @opened="onCloudOpened" />
   </div>
 </template>

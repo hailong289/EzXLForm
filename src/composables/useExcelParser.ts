@@ -10,7 +10,7 @@ import type {
   ImportOptions,
 } from '@/types/excel'
 import { cellToDisplayString, materializeSheet } from '@/utils/sheetGrid'
-import { formatDateValue } from '@/utils/dateFormat'
+import { buildXlsxBlob } from '@/cloud/session'
 import {
   LARGE_FILE_BYTES,
   exportLargeCsv,
@@ -198,58 +198,7 @@ export function useExcelParser() {
         return
       }
 
-      const wb = new ExcelJS.Workbook()
-      wb.creator = 'Excel Editor'
-      wb.created = new Date()
-
-      for (const sheet of workbook.sheets) {
-        const ws = wb.addWorksheet(sheet.name)
-
-        // Cấu hình columns
-        ws.columns = sheet.headers.map((h) => ({
-          header: h.label,
-          key: h.key,
-          width: Math.max(12, Math.min(40, h.label.length + 5)),
-        }))
-
-        // Style header row
-        const headerRow = ws.getRow(1)
-        headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } }
-        headerRow.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: 'FF217346' }, // Màu xanh Excel
-        }
-        headerRow.alignment = { vertical: 'middle', horizontal: 'center' }
-
-        // Thêm data rows
-        for (const row of sheet.rows) {
-          const rowValues: Record<string, CellValue> = {}
-          sheet.headers.forEach((h) => {
-            const v = row[h.key]
-            if (h.dataType === 'number' && v !== null && v !== undefined && v !== '') {
-              rowValues[h.key] = Number(v)
-            } else if (h.dataType === 'date') {
-              rowValues[h.key] = formatDateValue(v, h.dateFormat)
-            } else {
-              rowValues[h.key] = v ?? ''
-            }
-          })
-          ws.addRow(rowValues)
-        }
-
-        // Tự động căn lề
-        ws.eachRow((r, rowNum) => {
-          if (rowNum > 1) {
-            r.alignment = { vertical: 'middle' }
-          }
-        })
-      }
-
-      const buffer = await wb.xlsx.writeBuffer()
-      const blob = new Blob([buffer], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      })
+      const blob = await buildXlsxBlob(workbook)
       const finalFileName = customFileName || workbook.meta.fileName || 'exported.xlsx'
       saveAs(blob, finalFileName.endsWith('.xlsx') ? finalFileName : `${finalFileName}.xlsx`)
     } catch (err: unknown) {
