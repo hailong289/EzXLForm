@@ -19,6 +19,7 @@ import { useProgressTaskStore } from '@/stores/progressTaskStore'
 import { useVirtualRows } from '@/composables/useVirtualRows'
 import { useHistory } from '@/composables/useHistory'
 import RowForm from './RowForm.vue'
+import FormPresetDialog from './FormPresetDialog.vue'
 import TableHeaderCell from './TableHeaderCell.vue'
 import TableRowCell from './TableRowCell.vue'
 import BatchActionBar from './BatchActionBar.vue'
@@ -28,6 +29,8 @@ import { DATE_FORMATS, DEFAULT_DATE_FORMAT } from '@/utils/dateFormat'
 import { activeFilterRules, operatorsFor, operatorNeedsValue, rowMatchesFilters } from '@/utils/rowFilter'
 import { hasSheetOrder, readLogicalRange, scanLogicalRows } from '@/composables/rowPageStore'
 import { useRowMarks, MARK_COLORS, type MarkColor } from '@/composables/rowMarks'
+import { useFormPresets } from '@/composables/useFormPresets'
+import type { PresetDraftError } from '@/utils/formPresets'
 
 const workbookStore = useWorkbookStore()
 const selectionStore = useSelectionStore()
@@ -140,6 +143,36 @@ function onEditorPageHide() {
 // Active sheet & rows
 const activeSheet = computed(() => workbookStore.activeSheet)
 const headers = computed(() => activeSheet.value?.headers ?? [])
+const formPresets = useFormPresets()
+const presetDialogOpen = ref(false)
+const presetError = ref<PresetDraftError | null>(null)
+const manageableHeaders = computed(() => headers.value.filter((header) => header.visible !== false))
+const shownHeaderKeys = computed(() => {
+  if (!formPresets.selectedPresetId.value) return null
+  return formPresets.presets.value.find((preset) => preset.id === formPresets.selectedPresetId.value)?.visibleKeys ?? []
+})
+
+watch(
+  () => [activeSheet.value?.id, headers.value.map((header) => `${header.key}:${header.visible}`).join('|')] as const,
+  () => {
+    if (!activeSheet.value) return
+    void formPresets.loadForSheet(activeSheet.value.id, headers.value)
+  },
+  { immediate: true },
+)
+
+async function onCreatePreset(name: string, visibleKeys: string[]) {
+  presetError.value = await formPresets.createPreset(name, visibleKeys)
+}
+
+async function onUpdatePreset(id: string, name: string, visibleKeys: string[]) {
+  presetError.value = await formPresets.updatePreset(id, name, visibleKeys)
+}
+
+async function onRemovePreset(id: string) {
+  presetError.value = null
+  await formPresets.deletePreset(id)
+}
 const allRows = computed(() => activeSheet.value?.rows ?? [])
 const rowTotal = computed(() => (activeSheet.value ? sheetRowCount(activeSheet.value) : 0))
 const visibleRows = ref<Record<number, RowData>>({})
@@ -1261,12 +1294,18 @@ function addNamedColumn() {
         :data-revision="workbookStore.dataRevision"
         :total-rows="rowTotal"
         :table-hidden="!showTableList"
+        :preset-options="formPresets.presets.value"
+        :selected-preset-id="formPresets.selectedPresetId.value"
+        :shown-header-keys="shownHeaderKeys"
+        :preset-empty="formPresets.presetEmpty.value"
         :row-is-new="
           selectedRowIndex !== null &&
           !!activeSheet &&
           workbookStore.isFreshRow(activeSheet.id, selectedRowIndex)
         "
         @create="handleCreateRow"
+        @select-preset="formPresets.selectPreset"
+        @manage-presets="presetDialogOpen = true"
         @commit="handleCommitFreshRow"
         @edit-columns="showColumnEditor = true"
         @update="handleUpdateRow"
@@ -1811,12 +1850,18 @@ function addNamedColumn() {
               :data-revision="workbookStore.dataRevision"
               :total-rows="rowTotal"
               :table-hidden="!showTableList"
+              :preset-options="formPresets.presets.value"
+              :selected-preset-id="formPresets.selectedPresetId.value"
+              :shown-header-keys="shownHeaderKeys"
+              :preset-empty="formPresets.presetEmpty.value"
               :row-is-new="
                 selectedRowIndex !== null &&
                 !!activeSheet &&
                 workbookStore.isFreshRow(activeSheet.id, selectedRowIndex)
               "
               @create="handleCreateRow"
+              @select-preset="formPresets.selectPreset"
+              @manage-presets="presetDialogOpen = true"
               @commit="handleCommitFreshRow"
               @edit-columns="showColumnEditor = true"
               @update="handleUpdateRow"
@@ -1834,5 +1879,15 @@ function addNamedColumn() {
       </div>
       <div class="modal-backdrop bg-black/40" @click="closeMarkList" />
     </dialog>
+    <FormPresetDialog
+      :open="presetDialogOpen"
+      :headers="manageableHeaders"
+      :presets="formPresets.presets.value"
+      :error="presetError"
+      @close="presetDialogOpen = false"
+      @create="onCreatePreset"
+      @update="onUpdatePreset"
+      @remove="onRemovePreset"
+    />
   </div>
 </template>

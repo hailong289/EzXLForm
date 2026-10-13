@@ -4,11 +4,13 @@ import { Plus, MoreVertical, Copy, Trash2, Edit2, Table } from 'lucide-vue-next'
 import { useWorkbookStore } from '@/stores/workbookStore'
 import { useHistory } from '@/composables/useHistory'
 import { useAppConfigStore } from '@/stores/appConfigStore'
+import { useFormPresets } from '@/composables/useFormPresets'
 import type { SheetData } from '@/types/excel'
 import { ensureSourceGrid, headerChoiceIndexes, previewGridLine } from '@/utils/sheetGrid'
 
 const workbookStore = useWorkbookStore()
 const appConfigStore = useAppConfigStore()
+const formPresets = useFormPresets()
 const { push: pushHistory } = useHistory()
 
 const editingSheetId = ref<string | null>(null)
@@ -171,7 +173,7 @@ function onDuplicateSheet(sheet: SheetData) {
   })
 }
 
-function onDeleteSheet(sheet: SheetData) {
+async function onDeleteSheet(sheet: SheetData) {
   if (!workbookStore.workbook || workbookStore.workbook.sheets.length <= 1) {
     appConfigStore.addToast({
       type: 'warning',
@@ -181,6 +183,7 @@ function onDeleteSheet(sheet: SheetData) {
   }
 
   const sheetBackup = { ...sheet }
+  await formPresets.deletePresetsForSheet(sheet.id)
   workbookStore.deleteSheet(sheet.id)
 
   pushHistory({

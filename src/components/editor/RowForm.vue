@@ -25,6 +25,7 @@ import {
 } from 'lucide-vue-next'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import type { ColumnHeader, RowData } from '@/types/excel'
+import { EMPTY_PRESET_MESSAGE } from '@/utils/formPresets'
 import { DATE_FORMATS, DEFAULT_DATE_FORMAT, formatDateValue, parseDateToIso } from '@/utils/dateFormat'
 import { coerceCellValue, coerceRowData } from '@/utils/cellValue'
 
@@ -37,6 +38,10 @@ const props = defineProps<{
   sheetId?: string
   tableHidden?: boolean
   rowIsNew?: boolean
+  presetOptions: { id: string; name: string }[]
+  selectedPresetId: string
+  shownHeaderKeys: string[] | null
+  presetEmpty: boolean
 }>()
 
 const emit = defineEmits<{
@@ -50,6 +55,8 @@ const emit = defineEmits<{
   'jump-to-row': [index: number]
   'edit-columns': []
   'set-date-format': [key: string, format: string]
+  'select-preset': [presetId: string]
+  'manage-presets': []
   hide: []
   'show-table': []
 }>()
@@ -414,19 +421,23 @@ function jumpToLastRow() {
 const isEditMode = computed(() => props.selectedRowIndex !== null)
 const hasRows = computed(() => props.totalRows > 0)
 
-const formHeaders = computed(() => props.headers.filter((h) => h.visible !== false))
-
+const formHeaders = computed(() => {
+  const visible = props.headers.filter((header) => header.visible !== false)
+  if (props.shownHeaderKeys == null) return visible
+  const allowed = new Set(props.shownHeaderKeys)
+  return visible.filter((header) => allowed.has(header.key))
+})
 const fieldSearch = ref('')
 
 const filteredHeaders = computed(() => {
-  const q = fieldSearch.value.trim().toLowerCase()
-  if (!q) return formHeaders.value
-  return formHeaders.value.filter((h) => h.label.toLowerCase().includes(q))
+  const query = fieldSearch.value.trim().toLowerCase()
+  if (!query) return formHeaders.value
+  return formHeaders.value.filter((header) => header.label.toLowerCase().includes(query))
 })
 
 const filledCount = computed(() =>
   formHeaders.value.reduce(
-    (n, h) => n + ((formData.value[h.key] ?? '').trim() !== '' ? 1 : 0),
+    (count, header) => count + ((formData.value[header.key] ?? '').trim() !== '' ? 1 : 0),
     0,
   ),
 )
@@ -458,25 +469,30 @@ const FIELD_MAX_PX = 220
 function fitRowTextAreas() {
   const host = gridHostRef.value
   if (!host) return
-  const cards = [...host.querySelectorAll<HTMLElement>('[data-field-card]')]
   const cols = Math.max(1, columnCount.value)
-  for (let i = 0; i < cards.length; i += cols) {
-    const areas = cards
-      .slice(i, i + cols)
-      .map((card) => card.querySelector<HTMLTextAreaElement>('textarea.form-text-input'))
-      .filter((area): area is HTMLTextAreaElement => area != null)
-    if (areas.length === 0) continue
-    areas.forEach((area) => {
+  const cards = [...host.querySelectorAll<HTMLElement>('[data-field-card]')]
+  const areas = cards
+    .map((card) => card.querySelector<HTMLTextAreaElement>('textarea.form-text-input'))
+    .filter((area): area is HTMLTextAreaElement => area != null)
+  if (areas.length === 0) return
+
+  const rows: HTMLTextAreaElement[][] = []
+  for (let index = 0; index < areas.length; index += cols) {
+    rows.push(areas.slice(index, index + cols))
+  }
+
+  rows.forEach((row) => {
+    row.forEach((area) => {
       area.style.height = '0px'
       area.style.minHeight = '0px'
     })
-    const tallest = Math.max(FIELD_MIN_PX, ...areas.map((area) => area.scrollHeight))
+    const tallest = Math.max(FIELD_MIN_PX, ...row.map((area) => area.scrollHeight))
     const next = Math.min(tallest, FIELD_MAX_PX)
-    areas.forEach((area) => {
+    row.forEach((area) => {
       area.style.minHeight = `${next}px`
       area.style.height = `${next}px`
     })
-  }
+  })
 }
 
 // ── Modal chỉnh sửa chi tiết ô văn bản ─────────────────────────────────────
@@ -591,6 +607,20 @@ onUnmounted(() => {
 
       <!-- Quick Reset / New Row Button -->
       <div class="flex items-center gap-1.5 flex-shrink-0">
+        <select
+          class="select select-xs select-bordered max-w-[9rem]"
+          aria-label="Loại form"
+          :value="selectedPresetId"
+          @change="emit('select-preset', ($event.target as HTMLSelectElement).value)"
+        >
+          <option value="">Tất cả cột</option>
+          <option v-for="preset in presetOptions" :key="preset.id" :value="preset.id">
+            {{ preset.name }}
+          </option>
+        </select>
+        <button type="button" class="btn btn-xs btn-outline" @click="emit('manage-presets')">
+          Loại form
+        </button>
         <button
           class="btn btn-xs btn-outline gap-1"
           title="Ẩn form"
@@ -731,7 +761,10 @@ onUnmounted(() => {
         </label>
       </div>
 
-      <div v-if="formHeaders.length === 0" class="flex flex-col items-center justify-center h-48 opacity-50 text-xs">
+      <div v-if="presetEmpty" class="flex flex-col items-center justify-center h-48 px-6 text-center text-xs text-base-content/70">
+        {{ EMPTY_PRESET_MESSAGE }}
+      </div>
+      <div v-else-if="formHeaders.length === 0" class="flex flex-col items-center justify-center h-48 opacity-50 text-xs">
         Sheet này chưa có cột dữ liệu nào.
       </div>
       <div
@@ -743,6 +776,7 @@ onUnmounted(() => {
 
       <div
         v-else
+        data-field-grid
         class="grid gap-3 items-stretch"
         :style="{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }"
       >
@@ -753,7 +787,6 @@ onUnmounted(() => {
           class="bg-base-100 hover:bg-base-200/40 transition-colors p-3 rounded-xl border border-base-300 shadow-sm flex flex-col"
           :class="{ 'border-error/60': !!visibleFieldError(h.key) }"
         >
-          <!-- Label & Data Type Badge -->
           <div class="flex items-center justify-between mb-1 gap-2 shrink-0">
             <label :for="`field-${index}`" class="text-xs font-bold text-base-content/90 leading-tight flex items-center gap-1.5 min-w-0" :title="h.label">
               <Type v-if="h.dataType === 'text' || !h.dataType" class="w-3.5 h-3.5 text-primary opacity-70 flex-shrink-0" />
@@ -786,9 +819,8 @@ onUnmounted(() => {
                   {{ pattern }}
                 </option>
               </select>
-              <!-- Expand Modal Button (chỉ hiện cho ô văn bản) -->
               <button
-                v-if="h.dataType !== 'boolean' && h.dataType !== 'number' && h.dataType !== 'date'"
+                v-if="h.dataType === 'text' || !h.dataType"
                 type="button"
                 class="inline-flex h-5 w-5 items-center justify-center rounded text-base-content/40 hover:bg-base-200 hover:text-base-content"
                 title="Mở rộng chỉnh sửa"
@@ -799,10 +831,9 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- Input Fields (Realtime on input) -->
           <div class="field-body mt-1.5 min-h-0 flex-1">
             <textarea
-              v-if="h.dataType !== 'boolean' && h.dataType !== 'number' && h.dataType !== 'date'"
+              v-if="h.dataType === 'text' || !h.dataType"
               :id="`field-${index}`"
               :key="`${props.sheetId ?? ''}-${props.selectedRowIndex ?? 'new'}-${h.key}`"
               :value="formData[h.key]"
@@ -848,21 +879,20 @@ onUnmounted(() => {
             </div>
             <input
               v-else-if="h.dataType !== 'boolean'"
-              :id="`field-${index}`"
+              :id="`field-${h.key}`"
               :value="formData[h.key]"
-              :type="h.dataType === 'number' ? 'number' : 'text'"
+              type="number"
               class="form-text-input input input-bordered w-full text-xs bg-base-100 rounded-lg"
               :class="{ 'input-error': !!visibleFieldError(h.key) }"
               :aria-label="h.label"
               :aria-invalid="!!visibleFieldError(h.key)"
               :placeholder="`Nhập ${h.label}...`"
-              :title="'Nhập số, dùng dấu chấm cho phần thập phân'"
+              title="Nhập số, dùng dấu chấm cho phần thập phân"
               @input="onFieldInput(h.key, ($event.target as HTMLInputElement).value)"
               @blur="markTouched(h.key)"
               @keydown.enter="!isEditMode && handleCreate()"
             />
 
-            <!-- Boolean Toggle Checkbox -->
             <label
               v-else
               class="form-text-input flex items-center gap-2.5 cursor-pointer bg-base-100 rounded-lg border border-base-300"
@@ -882,7 +912,6 @@ onUnmounted(() => {
             </label>
           </div>
 
-          <!-- Error message -->
           <p
             v-if="visibleFieldError(h.key)"
             class="flex items-start gap-1 text-[10px] text-error mt-1.5 leading-tight"
