@@ -4,6 +4,7 @@ import sqlWasmUrl from 'sql.js/dist/sql-wasm-browser.wasm?url'
 import type { Database } from 'sql.js'
 import { saveAs } from 'file-saver'
 import type { WorkbookData, SheetData, ColumnHeader, RowData } from '@/types/excel'
+import { presetsForLiveSheets, type FormPreset } from '@/utils/formPresets'
 import { sheetRowCount } from '@/utils/sheetGrid'
 import {
   applyStoredRowMarks,
@@ -107,6 +108,17 @@ async function clearBinaryFromIndexedDB(key: string): Promise<void> {
 // Module-level SQLite instance
 let sqlInstance: any = null
 let currentDb: Database | null = null
+let presetCache: { sessionId: string; presets: FormPreset[] } | null = null
+let sqliteQueue: Promise<void> = Promise.resolve()
+
+function enqueueSqlite<T>(job: () => Promise<T>): Promise<T> {
+  const run = sqliteQueue.then(job, job)
+  sqliteQueue = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  return run
+}
 
 export function useSqliteStorage() {
   const isSaving = ref(false)
@@ -175,6 +187,13 @@ export function useSqliteStorage() {
         color TEXT NOT NULL,
         PRIMARY KEY (sheet_id, row_index)
       );
+
+      CREATE TABLE IF NOT EXISTS form_presets (
+        id TEXT PRIMARY KEY,
+        sheet_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        visible_keys_json TEXT NOT NULL
+      );
     `)
   }
 
@@ -192,6 +211,39 @@ export function useSqliteStorage() {
       }))
     } catch {
       return []
+    }
+  }
+
+  function readFormPresetsFromDatabase(db: Database): FormPreset[] {
+    try {
+      const result = db.exec(`SELECT id, sheet_id, name, visible_keys_json FROM form_presets`)
+      if (!result?.[0]?.values?.length) return []
+      return result[0].values.flatMap((row) => {
+        try {
+          const visibleKeys = JSON.parse(String(row[3] ?? '[]'))
+          if (!Array.isArray(visibleKeys)) return []
+          return [{
+            id: String(row[0]),
+            sheetId: String(row[1]),
+            name: String(row[2]),
+            visibleKeys: visibleKeys.map((key) => String(key)),
+          }]
+        } catch {
+          return []
+        }
+      })
+    } catch {
+      return []
+    }
+  }
+
+  function writeFormPresetsToDatabase(db: Database, presets: FormPreset[]): void {
+    db.run(`DELETE FROM form_presets`)
+    for (const preset of presets) {
+      db.run(
+        `INSERT INTO form_presets (id, sheet_id, name, visible_keys_json) VALUES (?, ?, ?, ?)`,
+        [preset.id, preset.sheetId, preset.name, JSON.stringify(preset.visibleKeys)],
+      )
     }
   }
 
@@ -341,11 +393,25 @@ export function useSqliteStorage() {
    * Lưu toàn bộ Workbook vào SQLite database và lưu xuống IndexedDB
    */
   async function saveSessionToSqlite(workbook: WorkbookData, sessionId?: string): Promise<void> {
+    return enqueueSqlite(async () => {
     isSaving.value = true
     const id = sessionId || activeSessionId.value || crypto.randomUUID()
     if (!sessionId) setActiveSessionId(id)
     try {
       const SQL = await getSqlInstance()
+      let carried: FormPreset[] = []
+      if (presetCache?.sessionId === id) {
+        carried = presetCache.presets
+      } else {
+        const previous = await getBinaryFromIndexedDB(sessionKey(id))
+        if (previous) {
+          const oldDb = new SQL.Database(previous)
+          carried = readFormPresetsFromDatabase(oldDb)
+          oldDb.close()
+        }
+      }
+      const live = presetsForLiveSheets(carried, workbook.sheets.map((sheet) => sheet.id))
+      presetCache = { sessionId: id, presets: live }
       const db = new SQL.Database()
       currentDb = db
 
@@ -405,6 +471,7 @@ export function useSqliteStorage() {
       })
 
       writeRowMarksToDatabase(db, workbook)
+      writeFormPresetsToDatabase(db, live)
 
       const binaryData = db.export()
       await saveBinaryToIndexedDB(sessionKey(id), binaryData)
@@ -428,6 +495,37 @@ export function useSqliteStorage() {
     } finally {
       isSaving.value = false
     }
+    })
+  }
+
+  async function withSessionDatabase<T>(sessionId: string, visit: (db: Database) => T): Promise<T> {
+    return enqueueSqlite(async () => {
+      const SQL = await getSqlInstance()
+      const binary = await getBinaryFromIndexedDB(sessionKey(sessionId))
+      const db = binary ? new SQL.Database(binary) : new SQL.Database()
+      initTables(db)
+      try {
+        const value = visit(db)
+        await saveBinaryToIndexedDB(sessionKey(sessionId), db.export())
+        return value
+      } finally {
+        db.close()
+      }
+    })
+  }
+
+  async function listFormPresets(sessionId: string): Promise<FormPreset[]> {
+    if (presetCache?.sessionId === sessionId) return presetCache.presets.map((preset) => ({ ...preset, visibleKeys: [...preset.visibleKeys] }))
+    const presets = await withSessionDatabase(sessionId, (db) => readFormPresetsFromDatabase(db))
+    presetCache = { sessionId, presets }
+    return presets.map((preset) => ({ ...preset, visibleKeys: [...preset.visibleKeys] }))
+  }
+
+  async function saveFormPresets(sessionId: string, presets: FormPreset[]): Promise<void> {
+    presetCache = { sessionId, presets: presets.map((preset) => ({ ...preset, visibleKeys: [...preset.visibleKeys] })) }
+    await withSessionDatabase(sessionId, (db) => {
+      writeFormPresetsToDatabase(db, presetCache?.sessionId === sessionId ? presetCache.presets : presets)
+    })
   }
 
   async function loadSessionById(id: string): Promise<WorkbookData | null> {
@@ -541,6 +639,8 @@ export function useSqliteStorage() {
     sessions,
     activeSessionId,
     saveSessionToSqlite,
+    listFormPresets,
+    saveFormPresets,
     loadSessionFromSqlite,
     loadSessionById,
     deleteFileSession,
