@@ -3,3 +3,4 @@ dist
 .vercel
 src-tauri/target
 docs
+.env

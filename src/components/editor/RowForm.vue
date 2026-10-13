@@ -4,8 +4,10 @@ import {
   Plus,
   Trash2,
   RotateCcw,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Check,
   FilePlus,
   FileEdit,
   Hash,
@@ -388,6 +390,12 @@ function handleNewRowMode() {
   focusFirstField()
 }
 
+function addRowAfterWithPreset(presetId: string) {
+  emit('select-preset', presetId)
+  handleCreate('after', 'blank')
+  ;(document.activeElement as HTMLElement | null)?.blur()
+}
+
 function focusFirstField() {
   nextTick(() => {
     const control = fieldControls()[0]
@@ -607,17 +615,6 @@ onUnmounted(() => {
 
       <!-- Quick Reset / New Row Button -->
       <div class="flex items-center gap-1.5 flex-shrink-0">
-        <select
-          class="select select-xs select-bordered max-w-[9rem]"
-          aria-label="Loại form"
-          :value="selectedPresetId"
-          @change="emit('select-preset', ($event.target as HTMLSelectElement).value)"
-        >
-          <option value="">Tất cả cột</option>
-          <option v-for="preset in presetOptions" :key="preset.id" :value="preset.id">
-            {{ preset.name }}
-          </option>
-        </select>
         <button type="button" class="btn btn-xs btn-outline" @click="emit('manage-presets')">
           Loại form
         </button>
@@ -949,16 +946,36 @@ onUnmounted(() => {
         <Copy class="w-4 h-4" />
         Sao chép xuống dưới
       </button>
-      <button
-        v-if="isEditMode"
-        type="button"
-        class="btn btn-secondary btn-sm flex-1 gap-1.5 text-xs font-bold min-w-[140px]"
-        :title="`Thêm một dòng trống ngay sau dòng #${(props.selectedRowIndex ?? 0) + 1}`"
-        @click="handleCreate('after', 'blank')"
-      >
-        <Plus class="w-4 h-4" />
-        Thêm dòng mới sau #{{ (props.selectedRowIndex ?? 0) + 1 }}
-      </button>
+      <div v-if="isEditMode" class="dropdown dropdown-top min-w-[140px] flex-1">
+        <button
+          type="button"
+          tabindex="0"
+          class="btn btn-secondary btn-sm w-full gap-1.5 text-xs font-bold"
+          :title="`Thêm một dòng trống ngay sau dòng #${(props.selectedRowIndex ?? 0) + 1}`"
+        >
+          <Plus class="w-4 h-4" />
+          Thêm dòng mới sau #{{ (props.selectedRowIndex ?? 0) + 1 }}
+          <ChevronDown class="w-3.5 h-3.5 opacity-80" />
+        </button>
+        <ul
+          tabindex="0"
+          class="dropdown-content menu z-50 mb-1 w-56 rounded-box border border-base-300 bg-base-100 p-1 shadow-lg"
+        >
+          <li class="menu-title px-2 py-1 text-[10px]">Chọn loại form</li>
+          <li>
+            <button type="button" class="text-xs" @click="addRowAfterWithPreset('')">
+              <Check class="h-3.5 w-3.5" :class="selectedPresetId ? 'opacity-0' : ''" />
+              Tất cả cột
+            </button>
+          </li>
+          <li v-for="preset in presetOptions" :key="preset.id">
+            <button type="button" class="text-xs" @click="addRowAfterWithPreset(preset.id)">
+              <Check class="h-3.5 w-3.5" :class="selectedPresetId === preset.id ? '' : 'opacity-0'" />
+              <span class="truncate">{{ preset.name }}</span>
+            </button>
+          </li>
+        </ul>
+      </div>
       <button
         v-if="!isEditMode"
         type="button"
