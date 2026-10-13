@@ -50,10 +50,10 @@ const COLORS_STORAGE_KEY = 'excel_editor_custom_colors'
 const FONT_STORAGE_KEY = 'excel_editor_font_size'
 
 export const FONT_SIZE_OPTIONS = [
-  { px: 14, label: 'Nhỏ' },
-  { px: 16, label: 'Vừa' },
-  { px: 18, label: 'Lớn' },
-  { px: 20, label: 'Rất lớn' },
+  { px: 14, label: 'common.small' },
+  { px: 16, label: 'common.medium' },
+  { px: 18, label: 'common.large' },
+  { px: 20, label: 'common.extra.large' },
 ]
 
 export const FONT_SIZE_MIN = 12

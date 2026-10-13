@@ -58,11 +58,11 @@ export function canRemoveTask(task: ProgressTask): boolean {
 }
 
 export function taskStatusLabel(status: ProgressTaskStatus): string {
-  if (status === 'running') return 'Đang chạy'
-  if (status === 'paused') return 'Tạm dừng'
-  if (status === 'queued') return 'Đang chờ'
-  if (status === 'done') return 'Hoàn thành'
-  return 'Đã dừng'
+  if (status === 'running') return 'common.running'
+  if (status === 'paused') return 'common.paused'
+  if (status === 'queued') return 'common.queued'
+  if (status === 'done') return 'common.done'
+  return 'common.stopped'
 }
 
 export function taskStatusBadgeClass(status: ProgressTaskStatus): string {
@@ -130,7 +130,7 @@ export const useProgressTaskStore = defineStore('progressTasks', {
   state: () => ({
     tasks: storedTasks,
     managerOpen: false,
-    dockVisible: true,
+    dockVisible: false,
   }),
   getters: {
     activeTask(state): ProgressTask | null {
@@ -170,9 +170,6 @@ export const useProgressTaskStore = defineStore('progressTasks', {
       writeStoredTasks(this.tasks)
       this.dockVisible = true
       return id
-    },
-    showDock() {
-      this.dockVisible = true
     },
     hideDock() {
       this.dockVisible = false

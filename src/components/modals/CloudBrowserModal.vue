@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Cloud, FileSpreadsheet, Link2, LogOut, RefreshCw, Search, X } from 'lucide-vue-next'
+import { Cloud, FileSpreadsheet, Link2, LogIn, LogOut, RefreshCw, Search, X } from 'lucide-vue-next'
 import { googleConfigured, microsoftConfigured } from '@/cloud/config'
+import { useLocale } from '@/composables/useLocale'
 import { googleAccountLabel, signOutGoogle } from '@/cloud/googleAuth'
 import { microsoftAccountLabel, signOutMicrosoft } from '@/cloud/microsoftAuth'
 import { fileFromShareLink } from '@/cloud/shareLink'
@@ -29,6 +30,7 @@ const error = ref('')
 const empty = ref('')
 const openingId = ref('')
 const linkBusy = ref(false)
+const { t } = useLocale()
 
 const title = computed(() => (props.providerId === 'google' ? 'Google Drive' : 'OneDrive'))
 const modeHint = computed(() =>
@@ -55,14 +57,15 @@ watch(
     openingId.value = ''
     linkBusy.value = false
     provider.value = props.providerId
+    account.value = ''
     const ready = props.providerId === 'google' ? googleConfigured() : microsoftConfigured()
     if (!ready) return
-    void signIn(props.providerId)
+    void restoreSession(props.providerId)
   },
 )
 
 watch(mode, () => {
-  if (!props.modelValue || !provider.value || busy.value) return
+  if (!props.modelValue || !provider.value || !account.value || busy.value) return
   void reload()
 })
 
@@ -98,6 +101,13 @@ function noteIfEmpty() {
         : 'Không thấy Google Sheet hoặc file .xlsx nào.'
 }
 
+async function restoreSession(next: CloudProviderId) {
+  const label = next === 'google' ? googleAccountLabel() : await microsoftAccountLabel()
+  if (!label) return
+  account.value = label
+  await reload()
+}
+
 async function signIn(next: CloudProviderId) {
   provider.value = next
   files.value = []
@@ -105,15 +115,11 @@ async function signIn(next: CloudProviderId) {
     if (next === 'google') {
       files.value = await listGoogleFiles(mode.value === 'live')
       account.value = googleAccountLabel() || 'Google'
-      noteIfEmpty()
-      return
-    }
-    account.value = (await microsoftAccountLabel()) || ''
-    if (!account.value) {
+    } else {
       files.value = await listRecentExcel()
       account.value = (await microsoftAccountLabel()) || 'Microsoft'
-      noteIfEmpty()
     }
+    noteIfEmpty()
   })
 }
 
@@ -218,13 +224,6 @@ async function signOut() {
         </div>
         <p class="text-[11px] leading-relaxed opacity-60">{{ modeHint }}</p>
 
-        <p v-if="props.providerId === 'google' && !googleConfigured()" class="text-xs text-warning">
-          Thiếu VITE_GOOGLE_CLIENT_ID.
-        </p>
-        <p v-else-if="props.providerId === 'microsoft' && !microsoftConfigured()" class="text-xs text-warning">
-          Thiếu VITE_MICROSOFT_CLIENT_ID.
-        </p>
-
         <form class="flex items-center gap-2" @submit.prevent="openFromLink">
           <label class="input input-sm input-bordered flex min-w-0 flex-1 items-center gap-2">
             <Link2 class="h-3.5 w-3.5 shrink-0 opacity-50" />
@@ -248,7 +247,15 @@ async function signOut() {
       </div>
 
       <div class="min-h-48 flex-1 overflow-y-auto border-t border-base-300 px-2 py-2 scrollbar-thin">
-        <div v-if="busy && files.length === 0" class="flex h-48 flex-col items-center justify-center gap-2 text-xs opacity-70">
+        <div v-if="!account && !busy" class="flex h-48 flex-col items-center justify-center gap-3 px-6 text-center">
+          <p class="text-sm text-base-content/70">{{ t('cloud.sign.see.files.name', { name: title }) }}</p>
+          <button type="button" class="btn btn-primary btn-sm gap-2" @click="signIn(props.providerId)">
+            <LogIn class="h-4 w-4" />
+            {{ t('cloud.sign') }}
+          </button>
+        </div>
+
+        <div v-else-if="busy && files.length === 0" class="flex h-48 flex-col items-center justify-center gap-2 text-xs opacity-70">
           <span class="loading loading-spinner loading-md text-primary" />
           {{ busy }}
         </div>
@@ -290,7 +297,7 @@ async function signOut() {
         <p class="min-w-0 truncate text-[11px]" :class="error ? 'text-error' : 'opacity-60'">
           {{ error || busy || `${visibleFiles.length} file` }}
         </p>
-        <button type="button" class="btn btn-ghost btn-xs gap-1" :disabled="!!busy || !provider" @click="reload">
+        <button type="button" class="btn btn-ghost btn-xs gap-1" :disabled="!!busy || !account" @click="reload">
           <RefreshCw class="h-3.5 w-3.5" :class="busy ? 'animate-spin' : ''" />
           Tải lại
         </button>

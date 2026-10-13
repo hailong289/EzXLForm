@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { FileSpreadsheet, Globe, MonitorDown } from 'lucide-vue-next'
+import { useLocale } from '@/composables/useLocale'
+
+const { t } = useLocale()
 
 const REPO = 'hailong289/EzXLForm'
 const RELEASES_URL = `https://github.com/${REPO}/releases/latest`
@@ -16,12 +19,12 @@ const emit = defineEmits<{
   'open-web': []
 }>()
 
-const points = [
-  'Mở và sửa file .xlsx, .xls, .csv, nhiều sheet trong một sổ.',
-  'Form và bảng chia đôi màn hình, bấm đúp ô để sửa trực tiếp.',
-  'Tìm và thay thế, xem trước Excel, hoàn tác và lưu phiên trên máy.',
-  'Bản desktop đóng bằng Tauri cho Windows, macOS và Linux.',
-]
+const points = computed(() => [
+  t('intro.open.edit.xlsx.xls.csv'),
+  t('intro.form.table.share.screen.double'),
+  t('intro.find.replace.preview.excel.undo'),
+  t('intro.tauri.desktop.build.windows.macos'),
+])
 
 const installers = ref<Installer[]>([])
 const version = ref('')
@@ -85,13 +88,12 @@ onMounted(async () => {
         </div>
         <div>
           <h1 class="text-2xl font-bold">EzXLForm</h1>
-          <p class="text-sm text-base-content/70">Excel Editor — sửa bảng tính trên web hoặc trên máy.</p>
+          <p class="text-sm text-base-content/70">{{ t('intro.excel.editor.edit.spreadsheets.browser') }}</p>
         </div>
       </div>
 
       <p class="mb-4 text-sm leading-relaxed text-base-content/80">
-        EzXLForm giúp xem và sửa dữ liệu Excel như một form. Chọn dòng trên bảng, gõ trên form,
-        hoặc sửa ngay trong ô. File lớn được chia trang, tiến trình tìm và thay thế có thể tạm dừng.
+        {{ t('intro.ezxlform.lets.you.view.edit') }}
       </p>
 
       <ul class="mb-6 space-y-2 text-sm">
@@ -110,12 +112,12 @@ onMounted(async () => {
           <div class="card-body gap-3 p-4">
             <div class="flex items-center gap-2 font-semibold">
               <Globe class="h-4 w-4 text-primary" />
-              Bản web
+              {{ t('intro.web.app') }}
             </div>
             <p class="text-xs leading-relaxed text-base-content/70">
-              Mở trình sửa ngay trên trang này. Kéo thả file hoặc vào lại phiên đã lưu.
+              {{ t('intro.open.editor.page.drop.file') }}
             </p>
-            <span class="btn btn-primary btn-sm w-fit">Mở bản web</span>
+            <span class="btn btn-primary btn-sm w-fit">{{ t('intro.open.web.app') }}</span>
           </div>
         </button>
 
@@ -123,18 +125,18 @@ onMounted(async () => {
           <div class="card-body gap-3 p-4">
             <div class="flex items-center gap-2 font-semibold">
               <MonitorDown class="h-4 w-4 text-primary" />
-              Bản desktop
+              {{ t('intro.desktop.app') }}
               <span v-if="version" class="badge badge-sm badge-ghost font-mono">{{ version }}</span>
             </div>
             <p class="text-xs leading-relaxed text-base-content/70">
-              Tải bộ cài mới nhất. Nút tự chọn file đúng hệ điều hành đang mở trang.
+              {{ t('intro.download.latest.installer.button.picks') }}
             </p>
             <a
               v-if="primary"
               class="btn btn-primary btn-sm w-fit"
               :href="primary.url"
             >
-              Tải {{ primary.label }}
+              {{ t('intro.download.label', { label: primary.label }) }}
             </a>
             <a
               v-else
@@ -143,7 +145,7 @@ onMounted(async () => {
               target="_blank"
               rel="noopener noreferrer"
             >
-              {{ loading ? 'Đang tìm bản cài...' : 'Tải bản desktop' }}
+              {{ loading ? t('intro.looking.installer') : t('intro.download.desktop.app') }}
             </a>
             <div v-if="others.length" class="flex flex-wrap gap-2">
               <a

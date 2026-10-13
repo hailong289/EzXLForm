@@ -17,10 +17,12 @@ import { useProgressTaskStore } from '@/stores/progressTaskStore'
 import { useExcelParser } from '@/composables/useExcelParser'
 import { LARGE_FILE_BYTES, isImportStopped } from '@/composables/importLargeWorkbook'
 import { useTheme } from '@/composables/useTheme'
+import { useLocale } from '@/composables/useLocale'
 import { useHistory } from '@/composables/useHistory'
 import { useSqliteStorage } from '@/composables/useSqliteStorage'
 import CloudBrowserModal from '@/components/modals/CloudBrowserModal.vue'
 import { useCloudBindings } from '@/cloud/bindings'
+import { googleConfigured, microsoftConfigured } from '@/cloud/config'
 import { pendingCloudDelta, rememberCloudBaseline, remoteRevision, writeCloudWorkbook, writesCellValues } from '@/cloud/sync'
 import type { CloudBinding, CloudProviderId } from '@/cloud/types'
 import type { CloudOpenResult } from '@/cloud/sync'
@@ -34,6 +36,7 @@ const appConfigStore = useAppConfigStore()
 const progressStore = useProgressTaskStore()
 const { readExcelFile, exportToExcel, exportToCsv, isLoading, importProgress } = useExcelParser()
 const { loadSavedTheme } = useTheme()
+const { t } = useLocale()
 const { undo, redo, canUndo, canRedo } = useHistory()
 const {
   saveSessionToSqlite,
@@ -205,6 +208,8 @@ const showIntro = ref(true)
 // ─── File Handling ──────────────────────────────────────────────────────────
 
 function openCloud(provider: CloudProviderId) {
+  if (provider === 'google' && !googleConfigured()) return
+  if (provider === 'microsoft' && !microsoftConfigured()) return
   cloudProvider.value = provider
   showCloud.value = true
 }
@@ -680,27 +685,27 @@ function handleHistoryRedo() {
           </div>
 
           <div>
-            <h2 class="text-lg font-bold">Kéo thả file Excel vào đây</h2>
+            <h2 class="text-lg font-bold">{{ t('home.drop.excel.file.here') }}</h2>
             <p class="text-xs opacity-60 mt-1">
-              Hoặc chọn một nguồn bên dưới. Máy tính nhận .xlsx, .xls, .csv.
+              {{ t('home.pick.source.below.computer.accepts') }}
             </p>
           </div>
 
           <div class="flex flex-wrap justify-center gap-2">
             <button type="button" class="btn btn-primary btn-sm gap-2" @click="triggerFileInput">
-              <HardDrive class="w-4 h-4" /> Máy tính
+              <HardDrive class="w-4 h-4" /> {{ t('home.computer') }}
             </button>
-            <button type="button" class="btn btn-outline btn-sm gap-2" @click="openCloud('google')">
+            <button v-if="googleConfigured()" type="button" class="btn btn-outline btn-sm gap-2" @click="openCloud('google')">
               <Cloud class="w-4 h-4" /> Google Drive
             </button>
-            <button type="button" class="btn btn-outline btn-sm gap-2" @click="openCloud('microsoft')">
+            <button v-if="microsoftConfigured()" type="button" class="btn btn-outline btn-sm gap-2" @click="openCloud('microsoft')">
               <FileSpreadsheet class="w-4 h-4" /> OneDrive
             </button>
           </div>
         </div>
 
         <div v-if="sessions.length" class="mt-6 w-full max-w-md text-left" @click.stop>
-          <h3 class="text-xs font-semibold uppercase tracking-wide opacity-60 mb-2">Phiên đang có</h3>
+          <h3 class="text-xs font-semibold uppercase tracking-wide opacity-60 mb-2">{{ t('home.saved.sessions') }}</h3>
           <ul class="flex flex-col gap-1 max-h-64 overflow-y-auto scrollbar-thin">
             <li v-for="session in sessions" :key="session.id">
               <button
@@ -711,7 +716,7 @@ function handleHistoryRedo() {
                 <span class="min-w-0 text-left">
                   <span class="block text-sm truncate">{{ session.fileName }}</span>
                   <span class="block text-[11px] opacity-50 font-normal">
-                    {{ session.rowCount }} dòng · {{ session.sheetCount }} sheet
+                    {{ t('home.rows.rows.sheets.sheets', { rows: session.rowCount, sheets: session.sheetCount }) }}
                   </span>
                 </span>
               </button>
@@ -721,9 +726,9 @@ function handleHistoryRedo() {
 
         <!-- Nút nạp dữ liệu mẫu -->
         <div class="mt-6 flex flex-col items-center gap-2">
-          <span class="text-xs opacity-50">hoặc thử nghiệm ngay không cần tải file:</span>
+          <span class="text-xs opacity-50">{{ t('home.try.now.without.file') }}</span>
           <button class="btn btn-outline btn-xs gap-1.5" @click="loadSampleData">
-            <Sparkles class="w-3.5 h-3.5 text-warning" /> Nạp dữ liệu mẫu (Nhân sự & Dự án)
+            <Sparkles class="w-3.5 h-3.5 text-warning" /> {{ t('home.load.sample.data.people.projects') }}
           </button>
         </div>
       </div>
@@ -749,7 +754,7 @@ function handleHistoryRedo() {
         class="absolute inset-0 bg-base-100/60 backdrop-blur-xs flex flex-col items-center justify-center z-50 gap-3"
       >
         <span class="loading loading-spinner loading-lg text-primary" />
-        <span class="text-sm font-medium">{{ importProgress || 'Đang xử lý file Excel...' }}</span>
+        <span class="text-sm font-medium">{{ importProgress || t('home.reading.excel.file') }}</span>
       </div>
     </main>
 

@@ -10,12 +10,14 @@ import { useSelectionStore } from '@/stores/selectionStore'
 import { useAppConfigStore } from '@/stores/appConfigStore'
 import { useHistory } from '@/composables/useHistory'
 import { sheetRowCount } from '@/utils/sheetGrid'
+import { useLocale } from '@/composables/useLocale'
 
 // ─── Stores & Composables ────────────────────────────────────────────────────
 const workbookStore = useWorkbookStore()
 const selectionStore = useSelectionStore()
 const appConfigStore = useAppConfigStore()
 const { undoStackSize, redoStackSize } = useHistory()
+const { t, locale } = useLocale()
 
 // ─── Computed ────────────────────────────────────────────────────────────────
 
@@ -37,10 +39,13 @@ const fileName = computed(() => workbookStore.workbook?.meta.fileName ?? '')
 const windowLabel = computed(() => {
   const window = appConfigStore.listWindow
   if (!window || window.total <= 0 || window.to < window.from) return ''
-  const from = window.from.toLocaleString('vi-VN')
-  const to = window.to.toLocaleString('vi-VN')
-  const total = window.total.toLocaleString('vi-VN')
-  return window.filtering ? `Khớp ${from}–${to} / ${total}` : `Dòng ${from}–${to} / ${total}`
+  const numberLocale = locale.value === 'en' ? 'en-US' : 'vi-VN'
+  const from = window.from.toLocaleString(numberLocale)
+  const to = window.to.toLocaleString(numberLocale)
+  const total = window.total.toLocaleString(numberLocale)
+  return window.filtering
+    ? t('status.match.total', { from, to, total })
+    : t('status.rows.total', { from, to, total })
 })
 </script>
 
@@ -74,7 +79,7 @@ const windowLabel = computed(() => {
 
       <!-- Trạng thái khi chưa mở file -->
       <span v-if="!activeSheet" class="italic opacity-50">
-        Chưa mở file nào
+        {{ t('status.no.file.open') }}
       </span>
     </div>
 
@@ -85,7 +90,7 @@ const windowLabel = computed(() => {
       <span
         v-if="undoStackSize > 0"
         class="flex items-center gap-1"
-        :title="`Có thể hoàn tác ${undoStackSize} thao tác`"
+        :title="t('status.can.undo.n.actions', { n: undoStackSize })"
       >
         <span class="opacity-60">Undo:</span>
         <span class="font-medium">{{ undoStackSize }}</span>

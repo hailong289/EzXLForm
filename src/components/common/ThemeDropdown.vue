@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { Palette, Check, RotateCcw, Type, Minus, Plus, Monitor } from 'lucide-vue-next'
 import { SYSTEM_THEME, useTheme } from '@/composables/useTheme'
+import { useLocale } from '@/composables/useLocale'
 
 const {
   currentTheme,
@@ -18,6 +19,7 @@ const {
   applyCustomColors,
   resetCustomColors,
 } = useTheme()
+const { t } = useLocale()
 
 const isOpen = ref(false)
 const isCustomizing = ref(false)
@@ -71,11 +73,11 @@ function pickTheme(name: string) {
   <button
     type="button"
     class="btn btn-ghost btn-xs gap-1"
-    title="Giao diện và cỡ chữ"
+    :title="t('theme.theme.text.size')"
     @click="toggle"
   >
     <Palette class="w-3.5 h-3.5 text-primary" />
-    <span class="hidden lg:inline text-xs font-normal">{{ themeLabel }}</span>
+    <span class="hidden lg:inline text-xs font-normal">{{ currentTheme === SYSTEM_THEME ? t('common.system') : themeLabel }}</span>
   </button>
 
   <Teleport to="body">
@@ -86,22 +88,22 @@ function pickTheme(name: string) {
       @click.stop
     >
       <div class="flex items-center justify-between pb-2 mb-2 border-b border-base-300">
-        <span class="font-bold text-xs uppercase tracking-wider opacity-70">Giao diện</span>
+        <span class="font-bold text-xs uppercase tracking-wider opacity-70">{{ t('theme.appearance') }}</span>
         <button type="button" class="btn btn-xs btn-outline btn-primary" @click="isCustomizing = !isCustomizing">
-          {{ isCustomizing ? 'Chọn theme' : 'Chỉnh màu' }}
+          {{ isCustomizing ? t('theme.choose.theme') : t('theme.custom.colors') }}
         </button>
       </div>
 
       <div class="mb-3">
         <div class="flex items-center gap-1.5 mb-1.5 text-xs font-semibold">
           <Type class="w-3.5 h-3.5 opacity-70" />
-          Cỡ chữ
+          {{ t('theme.text.size') }}
         </div>
         <div class="flex items-center gap-1 mb-1.5">
           <button
             type="button"
             class="btn btn-xs btn-ghost btn-square"
-            title="Giảm cỡ chữ"
+            :title="t('theme.decrease.text.size')"
             :disabled="fontSize <= fontSizeMin"
             @click="stepFontSize(-1)"
           >
@@ -111,7 +113,7 @@ function pickTheme(name: string) {
           <button
             type="button"
             class="btn btn-xs btn-ghost btn-square"
-            title="Tăng cỡ chữ"
+            :title="t('theme.increase.text.size')"
             :disabled="fontSize >= fontSizeMax"
             @click="stepFontSize(1)"
           >
@@ -127,30 +129,30 @@ function pickTheme(name: string) {
             :class="fontSize === option.px ? 'btn-primary' : 'btn-ghost'"
             @click="applyFontSize(option.px)"
           >
-            {{ option.label }}
+            {{ t(option.label) }}
           </button>
         </div>
       </div>
 
       <div v-if="isCustomizing" class="flex flex-col gap-3 py-1">
         <div class="flex items-center justify-between">
-          <label class="text-xs font-medium">Màu chính</label>
+          <label class="text-xs font-medium">{{ t('theme.primary') }}</label>
           <input v-model="tempPrimary" type="color" class="w-7 h-7 rounded border border-base-300 cursor-pointer" />
         </div>
         <div class="flex items-center justify-between">
-          <label class="text-xs font-medium">Màu phụ</label>
+          <label class="text-xs font-medium">{{ t('theme.secondary') }}</label>
           <input v-model="tempSecondary" type="color" class="w-7 h-7 rounded border border-base-300 cursor-pointer" />
         </div>
         <div class="flex items-center justify-between">
-          <label class="text-xs font-medium">Màu nhấn</label>
+          <label class="text-xs font-medium">{{ t('theme.accent') }}</label>
           <input v-model="tempAccent" type="color" class="w-7 h-7 rounded border border-base-300 cursor-pointer" />
         </div>
         <div class="flex gap-2 pt-2 border-t border-base-300">
           <button type="button" class="btn btn-primary btn-xs flex-1 gap-1" @click="onApplyColors">
-            <Check class="w-3 h-3" /> Áp dụng
+            <Check class="w-3 h-3" /> {{ t('common.apply') }}
           </button>
           <button type="button" class="btn btn-ghost btn-xs gap-1" @click="onResetColors">
-            <RotateCcw class="w-3 h-3" /> Khôi phục
+            <RotateCcw class="w-3 h-3" /> {{ t('theme.reset') }}
           </button>
         </div>
       </div>
@@ -163,7 +165,7 @@ function pickTheme(name: string) {
           @click="pickTheme(SYSTEM_THEME)"
         >
           <Monitor class="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
-          <span class="truncate flex-1 text-left ml-1.5">Theo hệ thống</span>
+          <span class="truncate flex-1 text-left ml-1.5">{{ t('theme.system') }}</span>
           <Check v-if="currentTheme === SYSTEM_THEME" class="w-3 h-3 flex-shrink-0" />
         </button>
         <button

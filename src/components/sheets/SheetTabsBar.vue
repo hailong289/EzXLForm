@@ -7,6 +7,9 @@ import { useAppConfigStore } from '@/stores/appConfigStore'
 import { useFormPresets } from '@/composables/useFormPresets'
 import type { SheetData } from '@/types/excel'
 import { ensureSourceGrid, headerChoiceIndexes, previewGridLine } from '@/utils/sheetGrid'
+import { useLocale } from '@/composables/useLocale'
+
+const { t } = useLocale()
 
 const workbookStore = useWorkbookStore()
 const appConfigStore = useAppConfigStore()
@@ -23,7 +26,7 @@ function headerChoices(sheet: SheetData) {
   const grid = ensureSourceGrid(sheet)
   return headerChoiceIndexes(grid.length, sheet.headerRowIndex).map((index) => ({
     index,
-    label: `Dòng ${index + 1} — ${previewGridLine(grid, index)}`,
+    label: t('common.row.n.preview', { n: index + 1, preview: previewGridLine(grid, index) }),
   }))
 }
 
@@ -60,7 +63,7 @@ function onPickHeader(sheet: SheetData, headerRowIndex: number) {
   workbookStore.setHeaderRow(sheet.id, headerRowIndex)
   appConfigStore.addToast({
     type: 'info',
-    message: `Sheet "${sheet.name}" dùng dòng ${headerRowIndex + 1} làm header`,
+    message: t('sheet.sheet.name.uses.row.n', { name: sheet.name, n: headerRowIndex + 1 }),
   })
 }
 
@@ -87,14 +90,14 @@ function saveRename(sheetId: string) {
       workbookStore.renameSheet(sheetId, trimmed)
       pushHistory({
         type: 'RENAME_SHEET',
-        description: `Đổi tên sheet "${oldName}" thành "${trimmed}"`,
+        description: t('sheet.rename.sheet.old.next', { old: oldName, next: trimmed }),
         sheetId,
         before: { name: oldName },
         after: { name: trimmed },
       })
       appConfigStore.addToast({
         type: 'info',
-        message: `Đã đổi tên sheet thành "${trimmed}"`,
+        message: t('sheet.renamed.sheet.name', { name: trimmed }),
       })
     }
   }
@@ -115,9 +118,9 @@ function onAddNewSheet() {
     id: newSheetId,
     name: newSheetName,
     headers: [
-      { key: 'col_0', label: 'Cột 1', originalIndex: 0, dataType: 'text' },
-      { key: 'col_1', label: 'Cột 2', originalIndex: 1, dataType: 'text' },
-      { key: 'col_2', label: 'Cột 3', originalIndex: 2, dataType: 'text' },
+      { key: 'col_0', label: t('sheet.column.n', { n: 1 }), originalIndex: 0, dataType: 'text' },
+      { key: 'col_1', label: t('sheet.column.n', { n: 2 }), originalIndex: 1, dataType: 'text' },
+      { key: 'col_2', label: t('sheet.column.n', { n: 3 }), originalIndex: 2, dataType: 'text' },
     ],
     rows: [
       { col_0: '', col_1: '', col_2: '' },
@@ -130,7 +133,7 @@ function onAddNewSheet() {
 
   pushHistory({
     type: 'ADD_SHEET',
-    description: `Thêm sheet mới "${newSheetName}"`,
+    description: t('sheet.add.sheet.name', { name: newSheetName }),
     sheetId: newSheetId,
     before: {},
     after: newSheet,
@@ -138,7 +141,7 @@ function onAddNewSheet() {
 
   appConfigStore.addToast({
     type: 'success',
-    message: `Đã tạo sheet mới "${newSheetName}"`,
+    message: t('sheet.created.sheet.name', { name: newSheetName }),
   })
 }
 
@@ -161,7 +164,7 @@ function onDuplicateSheet(sheet: SheetData) {
 
   pushHistory({
     type: 'ADD_SHEET',
-    description: `Nhân bản sheet "${sheet.name}"`,
+    description: t('sheet.duplicate.sheet.name', { name: sheet.name }),
     sheetId: newSheetId,
     before: {},
     after: clonedSheet,
@@ -169,7 +172,7 @@ function onDuplicateSheet(sheet: SheetData) {
 
   appConfigStore.addToast({
     type: 'success',
-    message: `Đã nhân bản sheet "${sheet.name}"`,
+    message: t('sheet.duplicated.sheet.name', { name: sheet.name }),
   })
 }
 
@@ -177,7 +180,7 @@ async function onDeleteSheet(sheet: SheetData) {
   if (!workbookStore.workbook || workbookStore.workbook.sheets.length <= 1) {
     appConfigStore.addToast({
       type: 'warning',
-      message: 'Không thể xóa sheet duy nhất còn lại.',
+      message: t('sheet.last.sheet.cannot.deleted'),
     })
     return
   }
@@ -188,7 +191,7 @@ async function onDeleteSheet(sheet: SheetData) {
 
   pushHistory({
     type: 'DELETE_SHEET',
-    description: `Xóa sheet "${sheet.name}"`,
+    description: t('sheet.delete.sheet.name', { name: sheet.name }),
     sheetId: sheet.id,
     before: sheetBackup,
     after: {},
@@ -196,7 +199,7 @@ async function onDeleteSheet(sheet: SheetData) {
 
   appConfigStore.addToast({
     type: 'info',
-    message: `Đã xóa sheet "${sheet.name}"`,
+    message: t('sheet.deleted.sheet.name', { name: sheet.name }),
   })
 }
 </script>
@@ -209,7 +212,7 @@ async function onDeleteSheet(sheet: SheetData) {
     <!-- Add Sheet Button -->
     <button
       class="btn btn-ghost btn-xs btn-square mr-2 hover:bg-base-300 flex-shrink-0"
-      title="Thêm Sheet mới"
+      :title="t('sheet.add.sheet')"
       @click="onAddNewSheet"
     >
       <Plus class="w-4 h-4 text-primary" />
@@ -253,7 +256,7 @@ async function onDeleteSheet(sheet: SheetData) {
 
         <button
           class="btn btn-ghost btn-xs btn-circle h-4 w-4 min-h-0 p-0 ml-1 opacity-70 hover:opacity-100"
-          title="Tùy chọn sheet"
+          :title="t('sheet.sheet.options')"
           @click="toggleSheetMenu(sheet.id, $event)"
         >
           <MoreVertical class="w-3 h-3 opacity-60" />
@@ -268,7 +271,7 @@ async function onDeleteSheet(sheet: SheetData) {
           >
             <div class="px-2 py-1.5 border-b border-base-300 mb-1">
               <label class="block text-[10px] font-semibold uppercase opacity-60 mb-1">
-                Dòng header của sheet này
+                {{ t('sheet.header.row.sheet') }}
               </label>
               <select
                 class="select select-xs select-bordered w-full text-xs"
@@ -283,17 +286,17 @@ async function onDeleteSheet(sheet: SheetData) {
             <ul class="menu p-0">
               <li>
                 <a class="py-1 px-2" @click="closeSheetMenu(); startRename(sheet)">
-                  <Edit2 class="w-3 h-3" /> Đổi tên
+                  <Edit2 class="w-3 h-3" /> {{ t('sheet.rename') }}
                 </a>
               </li>
               <li>
                 <a class="py-1 px-2" @click="closeSheetMenu(); onDuplicateSheet(sheet)">
-                  <Copy class="w-3 h-3" /> Nhân bản
+                  <Copy class="w-3 h-3" /> {{ t('sheet.duplicate') }}
                 </a>
               </li>
               <li v-if="workbookStore.sheetList.length > 1">
                 <a class="py-1 px-2 text-error" @click="closeSheetMenu(); onDeleteSheet(sheet)">
-                  <Trash2 class="w-3 h-3" /> Xóa sheet
+                  <Trash2 class="w-3 h-3" /> {{ t('sheet.delete.sheet') }}
                 </a>
               </li>
             </ul>

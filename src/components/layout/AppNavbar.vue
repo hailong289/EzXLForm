@@ -32,8 +32,11 @@ import { useProgressTaskStore, canPauseTask, canRemoveTask, canResumeTask, taskS
 import { useHistory } from '@/composables/useHistory'
 import { useSqliteStorage } from '@/composables/useSqliteStorage'
 import { useCloudBindings } from '@/cloud/bindings'
+import { googleConfigured, microsoftConfigured } from '@/cloud/config'
 import ThemeDropdown from '@/components/common/ThemeDropdown.vue'
+import LanguageDropdown from '@/components/common/LanguageDropdown.vue'
 import HelpGuide from '@/components/modals/HelpGuide.vue'
+import { useLocale } from '@/composables/useLocale'
 
 // ─── Emits ──────────────────────────────────────────────────────────────────
 const emit = defineEmits<{
@@ -76,6 +79,7 @@ const cloudBinding = computed(() => bindingFor(activeSessionId.value))
 /** Hidden file input element */
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const showHelp = ref(false)
+const { t, locale } = useLocale()
 
 // ─── View Mode Options ───────────────────────────────────────────────────────
 interface ViewModeOption {
@@ -95,10 +99,10 @@ function formatSessionTime(ts: number): string {
   const minute = 60_000
   const hour = 60 * minute
   const day = 24 * hour
-  if (diff < minute) return 'vừa xong'
-  if (diff < hour) return `${Math.floor(diff / minute)} phút trước`
-  if (diff < day) return `${Math.floor(diff / hour)} giờ trước`
-  return new Date(ts).toLocaleDateString('vi-VN')
+  if (diff < minute) return t('nav.just.now')
+  if (diff < hour) return t('nav.n.min.ago', { n: Math.floor(diff / minute) })
+  if (diff < day) return t('nav.n.hr.ago', { n: Math.floor(diff / hour) })
+  return new Date(ts).toLocaleDateString(locale.value === 'en' ? 'en-US' : 'vi-VN')
 }
 
 function closeMenus() {
@@ -133,7 +137,7 @@ function onFileSelected(event: Event) {
       <button
         type="button"
         class="btn btn-ghost btn-xs gap-1.5 px-1.5"
-        title="Về trang chủ"
+        :title="t('nav.home')"
         @click="emit('go-home')"
       >
         <FileSpreadsheet class="w-4 h-4 text-primary" />
@@ -144,10 +148,10 @@ function onFileSelected(event: Event) {
         <button
           tabindex="0"
           class="btn btn-ghost btn-xs gap-1"
-          title="Mở file từ máy hoặc cloud"
+          :title="t('nav.open.file.computer.cloud')"
         >
           <Upload class="w-3.5 h-3.5" />
-          <span class="hidden md:inline">Mở</span>
+          <span class="hidden md:inline">{{ t('nav.open') }}</span>
           <ChevronDown class="w-3 h-3" />
         </button>
         <ul
@@ -157,16 +161,16 @@ function onFileSelected(event: Event) {
           <li>
             <button class="text-sm gap-2" @click="openFilePicker(); closeMenus()">
               <HardDrive class="w-3.5 h-3.5" />
-              Từ máy tính
+              {{ t('nav.computer') }}
             </button>
           </li>
-          <li>
+          <li v-if="googleConfigured()">
             <button class="text-sm gap-2" @click="emit('open-cloud', 'google'); closeMenus()">
               <Cloud class="w-3.5 h-3.5" />
               Google Drive
             </button>
           </li>
-          <li>
+          <li v-if="microsoftConfigured()">
             <button class="text-sm gap-2" @click="emit('open-cloud', 'microsoft'); closeMenus()">
               <FileSpreadsheet class="w-3.5 h-3.5" />
               OneDrive
@@ -180,10 +184,10 @@ function onFileSelected(event: Event) {
         <button
           tabindex="0"
           class="btn btn-ghost btn-xs gap-1"
-          title="Các file đang giữ trong phiên làm việc"
+          :title="t('nav.files.kept.session')"
         >
           <Files class="w-3.5 h-3.5" />
-          <span class="hidden md:inline">Phiên</span>
+          <span class="hidden md:inline">{{ t('nav.sessions') }}</span>
           <span v-if="sessions.length" class="badge badge-xs badge-primary">{{ sessions.length }}</span>
           <ChevronDown class="w-3 h-3" />
         </button>
@@ -193,12 +197,12 @@ function onFileSelected(event: Event) {
           class="dropdown-content z-50 mt-1 w-80 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
         >
           <div class="mb-1 flex items-center justify-between px-1">
-            <span class="text-xs font-semibold">Phiên đang mở</span>
-            <span class="text-[10px] opacity-50">{{ sessions.length }} file</span>
+            <span class="text-xs font-semibold">{{ t('nav.open.sessions') }}</span>
+            <span class="text-[10px] opacity-50">{{ t('nav.n.files', { n: sessions.length }) }}</span>
           </div>
 
           <p v-if="sessions.length === 0" class="px-2 py-3 text-xs opacity-60">
-            Chưa có phiên nào. Mở một file để lưu vào đây.
+            {{ t('nav.no.sessions.yet.open.file') }}
           </p>
 
           <ul v-else class="max-h-72 space-y-1 overflow-y-auto">
@@ -224,18 +228,18 @@ function onFileSelected(event: Event) {
                         v-if="session.id === activeSessionId"
                         class="shrink-0 rounded bg-primary/15 px-1 py-px text-[9px] font-medium text-primary"
                       >
-                        Đang mở
+                        {{ t('nav.session.current') }}
                       </span>
                     </span>
                     <span class="block truncate text-[10px] opacity-50">
-                      {{ session.rowCount }} dòng · {{ session.sheetCount }} sheet · {{ formatSessionTime(session.updatedAt) }}
+                      {{ t('nav.rows.rows.sheets.sheets.time', { rows: session.rowCount, sheets: session.sheetCount, time: formatSessionTime(session.updatedAt) }) }}
                     </span>
                   </span>
                 </button>
                 <button
                   type="button"
                   class="btn btn-ghost btn-xs btn-circle h-6 w-6 min-h-0 text-base-content/50 hover:text-error"
-                  title="Đóng phiên này"
+                  :title="t('nav.close.session')"
                   @click.stop="emit('delete-session', session.id)"
                 >
                   <X class="h-3 w-3" />
@@ -261,10 +265,10 @@ function onFileSelected(event: Event) {
           tabindex="0"
           class="btn btn-ghost btn-xs gap-1"
           :disabled="!workbookStore.workbook"
-          title="Xuất file"
+          :title="t('nav.export.file')"
         >
           <Download class="w-3.5 h-3.5" />
-          <span class="hidden md:inline">Xuất</span>
+          <span class="hidden md:inline">{{ t('nav.export') }}</span>
           <ChevronDown class="w-3 h-3" />
         </button>
 
@@ -274,18 +278,18 @@ function onFileSelected(event: Event) {
         >
           <li>
             <button class="text-sm" @click="emit('export-xlsx')">
-              Xuất .xlsx
+              {{ t('nav.export.xlsx') }}
             </button>
           </li>
           <li>
             <button class="text-sm" @click="emit('export-csv')">
-              Xuất .csv
+              {{ t('nav.export.csv') }}
             </button>
           </li>
           <div class="divider my-0.5" />
           <li>
             <button class="text-sm text-primary font-medium" @click="emit('export-sqlite')">
-              Xuất .sqlite
+              {{ t('nav.export.sqlite') }}
             </button>
           </li>
         </ul>
@@ -297,7 +301,7 @@ function onFileSelected(event: Event) {
         <span
           v-if="workbookStore.isDirty"
           class="text-error font-bold text-sm leading-none"
-          title="Có thay đổi chưa được lưu"
+          :title="t('nav.unsaved.changes')"
         >*</span>
 
         <span
@@ -310,14 +314,14 @@ function onFileSelected(event: Event) {
         <!-- Badge SQLite Auto-Saved -->
         <span
           class="badge badge-xs badge-success badge-outline opacity-80 text-[10px] hidden xl:inline-flex py-1 px-1.5 font-mono"
-          title="Đã lưu phiên làm việc tự động vào SQLite (chống mất khi reload)"
+          :title="t('nav.session.saved.automatically.sqlite.kept')"
         >
           SQLite Saved
         </span>
         <span
           v-if="cloudBinding"
           class="badge badge-xs badge-info badge-outline text-[10px] hidden lg:inline-flex"
-          :title="cloudBinding.mode === 'live' ? 'Đang gắn chế độ đọc/ghi ô' : 'Đang gắn file cloud'"
+          :title="cloudBinding.mode === 'live' ? t('nav.linked.live.cell.read.write') : t('nav.linked.cloud.file')"
         >
           {{ cloudBinding.provider === 'google' ? 'Google' : 'OneDrive' }}
         </span>
@@ -331,22 +335,22 @@ function onFileSelected(event: Event) {
         <button
           class="join-item btn btn-xs px-3 gap-1.5"
           :class="appConfigStore.viewMode === 'editor' ? 'btn-primary font-bold shadow-xs' : 'btn-ghost'"
-          title="Chế độ Chỉnh sửa dữ liệu & Form"
+          :title="t('nav.edit.data.form')"
           @click="appConfigStore.setViewMode('editor')"
         >
           <Table2 class="w-3.5 h-3.5" />
-          <span>Chỉnh sửa</span>
+          <span>{{ t('nav.edit') }}</span>
         </button>
 
         <!-- Preview View -->
         <button
           class="join-item btn btn-xs px-3 gap-1.5"
           :class="appConfigStore.viewMode === 'preview' ? 'btn-primary font-bold shadow-xs' : 'btn-ghost'"
-          title="Chế độ Xem trước Excel (Spreadsheet Preview)"
+          :title="t('nav.excel.spreadsheet.preview')"
           @click="appConfigStore.setViewMode('preview')"
         >
           <Eye class="w-3.5 h-3.5" />
-          <span>Xem trước Excel</span>
+          <span>{{ t('nav.excel.preview') }}</span>
         </button>
       </div>
     </div>
@@ -358,7 +362,7 @@ function onFileSelected(event: Event) {
       <button
         class="btn btn-ghost btn-xs"
         :disabled="!canUndo"
-        :title="canUndo ? `Hoàn tác: ${undoDescription}` : 'Không có thao tác để hoàn tác'"
+        :title="canUndo ? t('nav.undo.desc', { desc: undoDescription }) : t('nav.nothing.undo')"
         @click="emit('undo')"
       >
         <Undo2 class="w-3.5 h-3.5" />
@@ -368,7 +372,7 @@ function onFileSelected(event: Event) {
       <button
         class="btn btn-ghost btn-xs"
         :disabled="!canRedo"
-        :title="canRedo ? `Làm lại: ${redoDescription}` : 'Không có thao tác để làm lại'"
+        :title="canRedo ? t('nav.redo.desc', { desc: redoDescription }) : t('nav.nothing.redo')"
         @click="emit('redo')"
       >
         <Redo2 class="w-3.5 h-3.5" />
@@ -381,18 +385,18 @@ function onFileSelected(event: Event) {
         v-if="cloudBinding"
         class="btn btn-ghost btn-xs gap-1"
         :disabled="cloudSyncing"
-        title="Đồng bộ lên cloud"
+        :title="t('nav.sync.cloud')"
         @click="emit('save-cloud')"
       >
         <span v-if="cloudSyncing" class="loading loading-spinner loading-xs" />
         <Cloud v-else class="w-3.5 h-3.5" />
-        <span class="hidden md:inline">Đồng bộ</span>
+        <span class="hidden md:inline">{{ t('nav.sync') }}</span>
       </button>
 
       <!-- Nút Find & Replace -->
       <button
         class="btn btn-ghost btn-xs"
-        title="Tìm & Thay thế (Ctrl+H)"
+        :title="t('nav.find.replace.ctrl.h')"
         @click="emit('toggle-find-replace')"
       >
         <Search class="w-3.5 h-3.5" />
@@ -402,11 +406,10 @@ function onFileSelected(event: Event) {
         <button
           tabindex="0"
           class="btn btn-ghost btn-xs gap-1"
-          title="Danh sách tiến trình"
-          @click="progressStore.showDock()"
+          :title="t('nav.tasks')"
         >
           <List class="w-3.5 h-3.5" />
-          <span class="hidden md:inline">Tiến trình</span>
+          <span class="hidden md:inline">{{ t('nav.tasks.menu') }}</span>
           <span v-if="progressStore.tasks.length" class="badge badge-xs badge-primary">
             {{ progressStore.tasks.length }}
           </span>
@@ -417,17 +420,17 @@ function onFileSelected(event: Event) {
           class="dropdown-content z-50 mt-1 w-80 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
         >
           <div class="mb-1 flex items-center justify-between px-1">
-            <span class="text-xs font-semibold">Danh sách tiến trình</span>
+            <span class="text-xs font-semibold">{{ t('nav.tasks') }}</span>
             <button
               type="button"
               class="btn btn-ghost btn-xs h-6 min-h-0"
               @click="progressStore.openManager(); closeMenus()"
             >
-              Quản lý
+              {{ t('nav.manage') }}
             </button>
           </div>
           <p v-if="progressStore.tasks.length === 0" class="px-2 py-3 text-xs opacity-60">
-            Không có tiến trình.
+            {{ t('nav.no.tasks') }}
           </p>
           <ul v-else class="max-h-72 space-y-1 overflow-y-auto">
             <li
@@ -440,7 +443,7 @@ function onFileSelected(event: Event) {
                   <div class="flex items-center gap-1">
                     <p class="min-w-0 truncate text-sm">{{ task.title }}</p>
                     <span class="badge badge-xs shrink-0" :class="taskStatusBadgeClass(task.status)">
-                      {{ taskStatusLabel(task.status) }}
+                      {{ t(taskStatusLabel(task.status)) }}
                     </span>
                   </div>
                   <p class="mt-0.5 line-clamp-2 text-xs leading-snug opacity-70 break-words">{{ task.detail }}</p>
@@ -454,7 +457,7 @@ function onFileSelected(event: Event) {
                   class="btn btn-ghost btn-xs h-6 min-h-0 gap-1"
                   @click="progressStore.pause(task.id)"
                 >
-                  <Pause class="h-3 w-3" /> Dừng
+                  <Pause class="h-3 w-3" /> {{ t('nav.pause') }}
                 </button>
                 <button
                   v-if="canResumeTask(task)"
@@ -462,7 +465,7 @@ function onFileSelected(event: Event) {
                   class="btn btn-ghost btn-xs h-6 min-h-0 gap-1"
                   @click="progressStore.resume(task.id)"
                 >
-                  <Play class="h-3 w-3" /> Tiếp tục
+                  <Play class="h-3 w-3" /> {{ t('nav.resume') }}
                 </button>
                 <button
                   v-if="canRemoveTask(task)"
@@ -470,7 +473,7 @@ function onFileSelected(event: Event) {
                   class="btn btn-ghost btn-xs h-6 min-h-0 gap-1 text-error"
                   @click="progressStore.remove(task.id)"
                 >
-                  <Trash2 class="h-3 w-3" /> Xóa
+                  <Trash2 class="h-3 w-3" /> {{ t('common.remove') }}
                 </button>
               </div>
             </li>
@@ -484,7 +487,7 @@ function onFileSelected(event: Event) {
       <button
         type="button"
         class="btn btn-ghost btn-xs"
-        title="Hướng dẫn (F1)"
+        :title="t('nav.help.f1')"
         @click="showHelp = true"
       >
         <CircleHelp class="w-3.5 h-3.5" />
@@ -492,6 +495,7 @@ function onFileSelected(event: Event) {
 
       <!-- Theme Dropdown -->
       <!-- Tách thành component riêng để dễ mở rộng -->
+      <LanguageDropdown />
       <ThemeDropdown />
     </div>
   </nav>

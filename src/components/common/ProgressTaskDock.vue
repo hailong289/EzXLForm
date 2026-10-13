@@ -3,9 +3,11 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { List, Minus, Pause, Play, Trash2, X } from 'lucide-vue-next'
 import { useProgressTaskStore, canPauseTask, canRemoveTask, canResumeTask, taskStatusBadgeClass, taskStatusLabel } from '@/stores/progressTaskStore'
 import type { ProgressTaskStatus } from '@/stores/progressTaskStore'
+import { useLocale } from '@/composables/useLocale'
 
 const DOCK_POS_KEY = 'excel_editor_progress_dock_pos'
 const progressStore = useProgressTaskStore()
+const { t } = useLocale()
 const collapsed = ref(true)
 const position = ref<{ x: number; y: number } | null>(null)
 const dragMoved = ref(false)
@@ -120,7 +122,7 @@ function onDragStart(event: PointerEvent) {
       </div>
       <div class="mt-1 flex items-center gap-2">
         <span v-if="activeTask" class="badge badge-sm" :class="taskStatusBadgeClass(activeTask.status)">
-          {{ taskStatusLabel(activeTask.status) }}
+          {{ t(taskStatusLabel(activeTask.status)) }}
         </span>
         <span class="font-mono text-sm tabular-nums">{{ activeTask ? `${activeTask.percent}%` : tasks.length }}</span>
       </div>
@@ -141,7 +143,7 @@ function onDragStart(event: PointerEvent) {
           <p class="text-sm font-semibold leading-snug">{{ activeTask?.title ?? 'Tiến trình' }}</p>
           <div class="mt-1 flex items-center gap-2">
             <span v-if="activeTask" class="badge badge-sm" :class="taskStatusBadgeClass(activeTask.status)">
-              {{ taskStatusLabel(activeTask.status) }}
+              {{ t(taskStatusLabel(activeTask.status)) }}
             </span>
             <span class="font-mono text-sm tabular-nums">{{ activeTask?.percent ?? 0 }}%</span>
           </div>
@@ -206,7 +208,7 @@ function onDragStart(event: PointerEvent) {
           <p v-if="task.detail" class="mt-1 text-xs leading-relaxed text-base-content/80 break-words">{{ task.detail }}</p>
           <progress class="progress mt-2 h-2 w-full" :class="progressClass(task.status)" :value="task.percent" max="100" />
           <div class="mt-2 flex items-center justify-between gap-2">
-            <span class="badge badge-sm" :class="taskStatusBadgeClass(task.status)">{{ taskStatusLabel(task.status) }}</span>
+            <span class="badge badge-sm" :class="taskStatusBadgeClass(task.status)">{{ t(taskStatusLabel(task.status)) }}</span>
             <div class="flex gap-1">
               <button
                 v-if="canPauseTask(task)"

@@ -3,6 +3,9 @@ import { computed, ref, watch } from 'vue'
 import { Calendar, Check, CheckSquare, Hash, LayoutTemplate, Search, Type, X } from 'lucide-vue-next'
 import type { ColumnHeader } from '@/types/excel'
 import type { FormPreset, PresetDraftError } from '@/utils/formPresets'
+import { useLocale } from '@/composables/useLocale'
+
+const { t } = useLocale()
 
 const props = defineProps<{
   open: boolean
@@ -72,11 +75,11 @@ function submit() {
   else emit('create', name.value, chosenKeys())
 }
 
-const errorText: Record<PresetDraftError, string> = {
-  'empty-name': 'Nhập tên loại form.',
-  'duplicate-name': 'Tên này đã có.',
-  'no-columns': 'Chọn ít nhất một cột.',
-}
+const errorText = computed<Record<PresetDraftError, string>>(() => ({
+  'empty-name': t('preset.enter.form.type.name'),
+  'duplicate-name': t('preset.name.already.exists'),
+  'no-columns': t('preset.choose.least.one.column'),
+}))
 </script>
 
 <template>
@@ -88,18 +91,18 @@ const errorText: Record<PresetDraftError, string> = {
             <LayoutTemplate class="h-4 w-4" />
           </span>
           <div class="min-w-0">
-            <h3 class="text-sm font-semibold leading-tight">Loại form</h3>
-            <p class="text-[11px] opacity-60">Chọn cột sẽ hiện khi nhập hoặc sửa dòng</p>
+            <h3 class="text-sm font-semibold leading-tight">{{ t('common.form.types') }}</h3>
+            <p class="text-[11px] opacity-60">{{ t('preset.choose.columns.shown.when.entering') }}</p>
           </div>
         </div>
-        <button type="button" class="btn btn-ghost btn-xs btn-circle" title="Đóng" @click="emit('close')">
+        <button type="button" class="btn btn-ghost btn-xs btn-circle" :title="t('common.close')" @click="emit('close')">
           <X class="h-4 w-4" />
         </button>
       </div>
 
       <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3">
         <div v-if="presets.length" class="flex flex-col gap-1.5">
-          <p class="text-[11px] font-medium opacity-60">Đã có</p>
+          <p class="text-[11px] font-medium opacity-60">{{ t('preset.saved.types') }}</p>
           <ul class="flex flex-col gap-1">
             <li
               v-for="preset in presets"
@@ -109,35 +112,35 @@ const errorText: Record<PresetDraftError, string> = {
             >
               <span class="truncate text-sm">{{ preset.name }}</span>
               <span class="flex shrink-0 gap-1">
-                <button type="button" class="btn btn-ghost btn-xs" @click="beginEdit(preset)">Sửa</button>
-                <button type="button" class="btn btn-ghost btn-xs text-error" @click="emit('remove', preset.id)">Xóa</button>
+                <button type="button" class="btn btn-ghost btn-xs" @click="beginEdit(preset)">{{ t('preset.edit') }}</button>
+                <button type="button" class="btn btn-ghost btn-xs text-error" @click="emit('remove', preset.id)">{{ t('common.remove') }}</button>
               </span>
             </li>
           </ul>
         </div>
 
         <label class="flex flex-col gap-1 text-xs">
-          <span class="font-medium opacity-70">{{ editingId ? 'Sửa loại' : 'Tên loại mới' }}</span>
-          <input v-model="name" class="input input-bordered input-sm" placeholder="Ví dụ: Nhập hàng hóa" />
+          <span class="font-medium opacity-70">{{ editingId ? t('preset.edit.type') : t('preset.new.type.name') }}</span>
+          <input v-model="name" class="input input-bordered input-sm" :placeholder="t('preset.example.goods.intake')" />
         </label>
 
         <div class="flex flex-col gap-2">
           <div class="flex items-center justify-between gap-2">
             <p class="text-xs font-medium">
-              Cột trên form
+              {{ t('preset.columns.form') }}
               <span class="font-normal opacity-60">{{ checked.length }}/{{ headers.length }}</span>
             </p>
             <div class="flex gap-1">
-              <button type="button" class="btn btn-ghost btn-xs" @click="selectAll">Chọn hết</button>
-              <button type="button" class="btn btn-ghost btn-xs" @click="clearAll">Bỏ chọn</button>
+              <button type="button" class="btn btn-ghost btn-xs" @click="selectAll">{{ t('preset.select.all') }}</button>
+              <button type="button" class="btn btn-ghost btn-xs" @click="clearAll">{{ t('preset.clear') }}</button>
             </div>
           </div>
           <label class="input input-bordered input-sm flex items-center gap-2">
             <Search class="h-3.5 w-3.5 shrink-0 opacity-50" />
-            <input v-model="columnQuery" class="grow bg-transparent text-xs" placeholder="Tìm cột..." />
+            <input v-model="columnQuery" class="grow bg-transparent text-xs" :placeholder="t('preset.find.column')" />
           </label>
           <p v-if="filteredHeaders.length === 0" class="py-6 text-center text-xs opacity-60">
-            Không có cột khớp.
+            {{ t('preset.no.matching.columns') }}
           </p>
           <div v-else class="grid grid-cols-2 gap-2">
             <button
@@ -169,9 +172,9 @@ const errorText: Record<PresetDraftError, string> = {
       </div>
 
       <div class="flex items-center justify-end gap-2 border-t border-base-300 px-4 py-3">
-        <button type="button" class="btn btn-ghost btn-sm" @click="emit('close')">Đóng</button>
+        <button type="button" class="btn btn-ghost btn-sm" @click="emit('close')">{{ t('common.close') }}</button>
         <button type="button" class="btn btn-primary btn-sm" @click="submit">
-          {{ editingId ? 'Lưu' : 'Thêm loại' }}
+          {{ editingId ? t('preset.save') : t('preset.add.type') }}
         </button>
       </div>
     </div>

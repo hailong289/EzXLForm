@@ -1,5 +1,9 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { AlertTriangle, Trash2, Info } from 'lucide-vue-next'
+import { useLocale } from '@/composables/useLocale'
+
+const { t } = useLocale()
 
 const props = withDefaults(
   defineProps<{
@@ -11,12 +15,13 @@ const props = withDefaults(
     type?: 'error' | 'warning' | 'info'
   }>(),
   {
-    title: 'Xác nhận',
-    confirmText: 'Đồng ý',
-    cancelText: 'Hủy bỏ',
     type: 'warning',
   },
 )
+
+const titleText = computed(() => props.title ?? t('dialog.confirm'))
+const confirmLabel = computed(() => props.confirmText ?? t('dialog.ok'))
+const cancelLabel = computed(() => props.cancelText ?? t('common.cancel'))
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
@@ -51,14 +56,14 @@ function onConfirm() {
           <AlertTriangle v-else-if="props.type === 'warning'" class="w-5 h-5" />
           <Info v-else class="w-5 h-5" />
         </div>
-        <h3 class="font-bold text-base">{{ props.title }}</h3>
+        <h3 class="font-bold text-base">{{ titleText }}</h3>
       </div>
 
       <p class="text-sm opacity-80 leading-relaxed">{{ props.message }}</p>
 
       <div class="modal-action mt-5">
         <button class="btn btn-sm btn-ghost" @click="onCancel">
-          {{ props.cancelText }}
+          {{ cancelLabel }}
         </button>
         <button
           class="btn btn-sm"
@@ -69,7 +74,7 @@ function onConfirm() {
           }"
           @click="onConfirm"
         >
-          {{ props.confirmText }}
+          {{ confirmLabel }}
         </button>
       </div>
     </div>

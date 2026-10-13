@@ -27,9 +27,11 @@ import {
 } from 'lucide-vue-next'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import type { ColumnHeader, RowData } from '@/types/excel'
-import { EMPTY_PRESET_MESSAGE } from '@/utils/formPresets'
 import { DATE_FORMATS, DEFAULT_DATE_FORMAT, formatDateValue, parseDateToIso } from '@/utils/dateFormat'
 import { coerceCellValue, coerceRowData } from '@/utils/cellValue'
+import { useLocale } from '@/composables/useLocale'
+
+const { t } = useLocale()
 
 const props = defineProps<{
   headers: ColumnHeader[]
@@ -585,29 +587,29 @@ onUnmounted(() => {
         <div>
           <div class="flex items-center gap-2">
             <h3 class="font-bold text-sm leading-none">
-              {{ !hasRows ? 'Chưa có dòng' : isEditMode ? `Dòng #${(props.selectedRowIndex ?? 0) + 1}` : 'Tạo Dòng Mới' }}
+              {{ !hasRows ? t('form.no.rows') : isEditMode ? t('form.row.n', { n: (props.selectedRowIndex ?? 0) + 1 }) : t('form.new.row') }}
             </h3>
 
             <span
               v-if="isEditMode && syncUi !== 'idle'"
               class="inline-flex items-center justify-center rounded-md p-1"
               :class="syncUi === 'done' ? 'bg-success/15 text-success' : 'bg-info/15 text-info'"
-              :title="syncUi === 'done' ? 'Đã lưu' : 'Đang lưu…'"
+              :title="syncUi === 'done' ? t('form.saved') : t('form.saving')"
             >
               <CheckCircle2 v-if="syncUi === 'done'" class="w-3.5 h-3.5" />
               <RefreshCw v-else class="w-3.5 h-3.5 animate-spin" />
             </span>
             <span v-else-if="hasRows" class="badge badge-xs badge-primary font-semibold py-0.5 px-2">
-              Chế độ tạo mới
+              {{ t('form.new.mode') }}
             </span>
           </div>
           <span class="text-[11px] opacity-60 mt-0.5 block">
             {{
               !hasRows
-                ? 'Bấm Thêm dòng mới để bắt đầu nhập'
+                ? t('form.click.add.row.start.entering')
                 : isEditMode
-                  ? 'Mũi tên sang ô bên cạnh, Ctrl+Enter sang dòng kế'
-                  : 'Nhập thông tin bên dưới và bấm "Tạo dòng mới"'
+                  ? t('form.arrow.keys.move.between.fields')
+                  : t('form.fill.fields.below.click.new')
             }}
           </span>
         </div>
@@ -616,38 +618,38 @@ onUnmounted(() => {
       <!-- Quick Reset / New Row Button -->
       <div class="flex items-center gap-1.5 flex-shrink-0">
         <button type="button" class="btn btn-xs btn-outline" @click="emit('manage-presets')">
-          Loại form
+          {{ t('common.form.types') }}
         </button>
         <button
           class="btn btn-xs btn-outline gap-1"
-          title="Ẩn form"
+          :title="t('form.hide.form')"
           :disabled="props.tableHidden"
           @click="emit('hide')"
         >
-          <PanelLeftClose class="w-3.5 h-3.5" /> Ẩn form
+          <PanelLeftClose class="w-3.5 h-3.5" /> {{ t('form.hide.form') }}
         </button>
         <button
           v-if="props.tableHidden"
           class="btn btn-xs btn-outline btn-primary gap-1"
-          title="Hiện bảng"
+          :title="t('form.show.table')"
           @click="emit('show-table')"
         >
-          <PanelRightOpen class="w-3.5 h-3.5" /> Hiện bảng
+          <PanelRightOpen class="w-3.5 h-3.5" /> {{ t('form.show.table') }}
         </button>
         <button
           class="btn btn-xs btn-outline gap-1"
-          title="Thêm hoặc sửa tên cột header"
+          :title="t('form.add.rename.header.columns')"
           @click="emit('edit-columns')"
         >
-          <Columns3 class="w-3.5 h-3.5" /> Cột
+          <Columns3 class="w-3.5 h-3.5" /> {{ t('form.columns') }}
         </button>
         <button
           v-if="isEditMode"
           class="btn btn-xs btn-outline btn-primary gap-1"
-          title="Chuyển sang chế độ tạo dòng mới"
+          :title="t('form.switch.new.row.entry')"
           @click="handleNewRowMode"
         >
-          <Plus class="w-3.5 h-3.5" /> Tạo dòng mới
+          <Plus class="w-3.5 h-3.5" /> {{ t('form.create.row') }}
         </button>
       </div>
     </div>
@@ -659,25 +661,25 @@ onUnmounted(() => {
     >
       <!-- Jump to row input -->
       <div class="flex items-center gap-1.5">
-        <span class="opacity-70 text-[11px]">Đang xem:</span>
+        <span class="opacity-70 text-[11px]">{{ t('form.viewing') }}</span>
         <input
           v-model.number="jumpInput"
           type="number"
           min="1"
           :max="props.totalRows"
           class="input input-xs input-bordered w-24 text-center font-bold text-xs h-6 px-1"
-          placeholder="Số dòng"
-          title="Nhập số dòng rồi Enter"
+          :placeholder="t('form.row.number')"
+          :title="t('common.type.row.number.press.enter')"
           @keydown.enter="onJumpSubmit"
         />
-        <span class="opacity-60 text-[11px]">/ {{ props.totalRows }} dòng</span>
+        <span class="opacity-60 text-[11px]">{{ t('form.n.rows', { n: props.totalRows }) }}</span>
         <button
           type="button"
           class="btn btn-ghost btn-xs h-6 px-2 text-[11px]"
-          title="Đến dòng cuối cùng"
+          :title="t('common.go.last.row')"
           @click="jumpToLastRow"
         >
-          Cuối
+          {{ t('common.last') }}
         </button>
       </div>
 
@@ -686,18 +688,18 @@ onUnmounted(() => {
         <button
           class="btn btn-ghost btn-xs gap-1 h-6 px-2 text-[11px]"
           :disabled="props.selectedRowIndex === null || props.selectedRowIndex <= 0"
-          title="Dòng trước (Ctrl+Shift+Enter)"
+          :title="t('form.previous.row.ctrl.shift.enter')"
           @click="emit('select-prev')"
         >
-          <ChevronLeft class="w-3.5 h-3.5" /> Trước
+          <ChevronLeft class="w-3.5 h-3.5" /> {{ t('form.previous') }}
         </button>
         <button
           class="btn btn-ghost btn-xs gap-1 h-6 px-2 text-[11px]"
           :disabled="props.selectedRowIndex === null || props.selectedRowIndex >= props.totalRows - 1"
-          title="Dòng kế tiếp (Ctrl+Enter)"
+          :title="t('form.next.row.ctrl.enter')"
           @click="emit('select-next')"
         >
-          Sau <ChevronRight class="w-3.5 h-3.5" />
+          {{ t('form.next') }} <ChevronRight class="w-3.5 h-3.5" />
         </button>
       </div>
     </div>
@@ -707,7 +709,7 @@ onUnmounted(() => {
       v-if="hasRows && !isEditMode && formHeaders.length > 0"
       class="px-3 py-1.5 bg-base-200/50 border-b border-base-300 flex items-center gap-2"
     >
-      <span class="text-[11px] opacity-70 flex-shrink-0">Nhập liệu:</span>
+      <span class="text-[11px] opacity-70 flex-shrink-0">{{ t('form.filled') }}</span>
       <progress
         class="progress progress-primary flex-1 h-2"
         :value="filledCount"
@@ -722,15 +724,15 @@ onUnmounted(() => {
       v-if="!hasRows"
       class="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center"
     >
-      <p class="text-sm text-base-content/70">Sheet này chưa có dòng dữ liệu.</p>
+      <p class="text-sm text-base-content/70">{{ t('form.sheet.has.no.data.rows') }}</p>
       <button
         type="button"
         class="btn btn-primary btn-sm gap-1.5"
-        title="Thêm một dòng trống"
+        :title="t('form.add.blank.row')"
         @click="handleCreate('end', 'blank')"
       >
         <Plus class="w-4 h-4" />
-        Thêm dòng mới
+        {{ t('form.add.row') }}
       </button>
     </div>
 
@@ -743,14 +745,14 @@ onUnmounted(() => {
             v-model="fieldSearch"
             type="text"
             class="grow text-xs bg-transparent"
-            placeholder="Tìm cột trong form..."
-            aria-label="Tìm cột trong form"
+            :placeholder="t('form.find.column.form')"
+            :aria-label="t('form.find.column.label')"
           />
           <button
             v-if="fieldSearch"
             type="button"
             class="btn btn-ghost btn-xs btn-circle"
-            title="Xóa tìm kiếm"
+            :title="t('form.clear.search')"
             @click="fieldSearch = ''"
           >
             <X class="w-3 h-3" />
@@ -759,16 +761,16 @@ onUnmounted(() => {
       </div>
 
       <div v-if="presetEmpty" class="flex flex-col items-center justify-center h-48 px-6 text-center text-xs text-base-content/70">
-        {{ EMPTY_PRESET_MESSAGE }}
+        {{ t('common.form.type.has.no.columns') }}
       </div>
       <div v-else-if="formHeaders.length === 0" class="flex flex-col items-center justify-center h-48 opacity-50 text-xs">
-        Sheet này chưa có cột dữ liệu nào.
+        {{ t('form.sheet.has.no.data.columns') }}
       </div>
       <div
         v-else-if="filteredHeaders.length === 0"
         class="flex flex-col items-center justify-center h-48 opacity-50 text-xs"
       >
-        Không tìm thấy cột khớp với "{{ fieldSearch }}".
+        {{ t('form.no.column.matches.q', { q: fieldSearch }) }}
       </div>
 
       <div
@@ -794,7 +796,7 @@ onUnmounted(() => {
               <span
                 v-if="formData[h.key] !== originalData[h.key]"
                 class="w-1.5 h-1.5 rounded-full bg-warning flex-shrink-0"
-                title="Đã thay đổi"
+                :title="t('form.changed')"
               />
             </label>
 
@@ -809,7 +811,7 @@ onUnmounted(() => {
                 v-else
                 class="select select-xs select-bordered h-6 min-h-0 w-[6.5rem] text-[10px] font-mono"
                 :value="datePattern(h)"
-                title="Định dạng ngày"
+                :title="t('form.date.format')"
                 @change="emit('set-date-format', h.key, ($event.target as HTMLSelectElement).value)"
               >
                 <option v-for="pattern in DATE_FORMATS" :key="pattern" :value="pattern">
@@ -820,7 +822,7 @@ onUnmounted(() => {
                 v-if="h.dataType === 'text' || !h.dataType"
                 type="button"
                 class="inline-flex h-5 w-5 items-center justify-center rounded text-base-content/40 hover:bg-base-200 hover:text-base-content"
-                title="Mở rộng chỉnh sửa"
+                :title="t('form.expand.editor')"
                 @click="openModal(h.key)"
               >
                 <Maximize2 class="w-3 h-3" />
@@ -838,7 +840,7 @@ onUnmounted(() => {
               :class="{ 'textarea-error': !!visibleFieldError(h.key) }"
               :aria-label="h.label"
               :aria-invalid="!!visibleFieldError(h.key)"
-              :placeholder="`Nhập ${h.label}...`"
+              :placeholder="t('form.enter.label', { label: h.label })"
               @input="onTextAreaInput(h.key, $event)"
               @blur="markTouched(h.key)"
             />
@@ -852,7 +854,7 @@ onUnmounted(() => {
                 :aria-label="h.label"
                 :aria-invalid="!!visibleFieldError(h.key)"
                 :placeholder="datePattern(h)"
-                :title="`Ngày theo định dạng ${datePattern(h)}`"
+                :title="t('form.date.pattern.format', { pattern: datePattern(h) })"
                 @input="onDateInput(h, $event)"
                 @blur="onDateBlur(h)"
                 @keydown.enter="!isEditMode && handleCreate()"
@@ -860,8 +862,8 @@ onUnmounted(() => {
               <button
                 type="button"
                 class="absolute right-1 top-1/2 -translate-y-1/2 btn btn-ghost btn-xs btn-square min-h-0 h-6 w-6"
-                :title="`Chọn ngày cho ${h.label}`"
-                :aria-label="`Chọn ngày cho ${h.label}`"
+                :title="t('form.pick.date.label', { label: h.label })"
+                :aria-label="t('form.pick.date.label', { label: h.label })"
                 @click="openDatePicker(h)"
               >
                 <Calendar class="w-3.5 h-3.5" />
@@ -883,8 +885,8 @@ onUnmounted(() => {
               :class="{ 'input-error': !!visibleFieldError(h.key) }"
               :aria-label="h.label"
               :aria-invalid="!!visibleFieldError(h.key)"
-              :placeholder="`Nhập ${h.label}...`"
-              title="Nhập số, dùng dấu chấm cho phần thập phân"
+              :placeholder="t('form.enter.label', { label: h.label })"
+              :title="t('form.enter.number.use.dot.decimal')"
               @input="onFieldInput(h.key, ($event.target as HTMLInputElement).value)"
               @blur="markTouched(h.key)"
               @keydown.enter="!isEditMode && handleCreate()"
@@ -904,7 +906,7 @@ onUnmounted(() => {
                 "
               />
               <span class="text-xs font-semibold">
-                {{ formData[h.key] === 'true' || formData[h.key] === '1' ? 'Đúng (True / Yes)' : 'Sai (False / No)' }}
+                {{ formData[h.key] === 'true' || formData[h.key] === '1' ? t('form.true.yes') : t('form.false.no') }}
               </span>
             </label>
           </div>
@@ -930,42 +932,42 @@ onUnmounted(() => {
         v-if="props.rowIsNew"
         type="button"
         class="btn btn-warning btn-sm gap-1.5 text-xs font-bold"
-        title="Lưu dòng mới và bỏ màu đánh dấu"
+        :title="t('form.save.new.row.clear.highlight')"
         @click="handleCommit"
       >
-        <CheckCircle2 class="w-4 h-4" /> Lưu dòng mới
+        <CheckCircle2 class="w-4 h-4" /> {{ t('form.save.new.row') }}
       </button>
       <button
         v-if="isEditMode"
         type="button"
         class="btn btn-primary btn-sm flex-1 gap-1.5 text-xs font-bold shadow-xs min-w-[140px]"
-        :title="`Sao chép dữ liệu dòng #${(props.selectedRowIndex ?? 0) + 1} thành dòng ngay bên dưới`"
+        :title="t('form.copy.row.n.row.just', { n: (props.selectedRowIndex ?? 0) + 1 })"
         :disabled="!props.selectedRow"
         @click="handleCreate('after', 'copy')"
       >
         <Copy class="w-4 h-4" />
-        Sao chép xuống dưới
+        {{ t('form.copy.below') }}
       </button>
       <div v-if="isEditMode" class="dropdown dropdown-top min-w-[140px] flex-1">
         <button
           type="button"
           tabindex="0"
           class="btn btn-secondary btn-sm w-full gap-1.5 text-xs font-bold"
-          :title="`Thêm một dòng trống ngay sau dòng #${(props.selectedRowIndex ?? 0) + 1}`"
+          :title="t('form.add.blank.row.right.after', { n: (props.selectedRowIndex ?? 0) + 1 })"
         >
           <Plus class="w-4 h-4" />
-          Thêm dòng mới sau #{{ (props.selectedRowIndex ?? 0) + 1 }}
+          {{ t('form.add.row.after.n', { n: (props.selectedRowIndex ?? 0) + 1 }) }}
           <ChevronDown class="w-3.5 h-3.5 opacity-80" />
         </button>
         <ul
           tabindex="0"
           class="dropdown-content menu z-50 mb-1 w-56 rounded-box border border-base-300 bg-base-100 p-1 shadow-lg"
         >
-          <li class="menu-title px-2 py-1 text-[10px]">Chọn loại form</li>
+          <li class="menu-title px-2 py-1 text-[10px]">{{ t('form.choose.form.type') }}</li>
           <li>
             <button type="button" class="text-xs" @click="addRowAfterWithPreset('')">
               <Check class="h-3.5 w-3.5" :class="selectedPresetId ? 'opacity-0' : ''" />
-              Tất cả cột
+              {{ t('common.all.columns') }}
             </button>
           </li>
           <li v-for="preset in presetOptions" :key="preset.id">
@@ -980,20 +982,20 @@ onUnmounted(() => {
         v-if="!isEditMode"
         type="button"
         class="btn btn-primary btn-sm flex-1 gap-1.5 text-xs font-bold shadow-xs min-w-[140px]"
-        title="Thêm dòng đang nhập vào cuối bảng"
+        :title="t('form.add.current.entry.end.table')"
         @click="handleCreate('end', 'copy')"
       >
         <Plus class="w-4 h-4" />
-        Tạo dòng mới
+        {{ t('form.create.row') }}
       </button>
       <button
         v-if="isEditMode"
         type="button"
         class="btn btn-outline btn-sm gap-1 text-xs"
-        title="Thêm một dòng trống ở cuối bảng"
+        :title="t('form.add.blank.row.end.table')"
         @click="handleCreate('end', 'blank')"
       >
-        <Plus class="w-3.5 h-3.5" /> Thêm ở cuối
+        <Plus class="w-3.5 h-3.5" /> {{ t('form.add.end') }}
       </button>
 
       <!-- Nhóm nút phụ: Xóa & Làm mới -->
@@ -1001,18 +1003,18 @@ onUnmounted(() => {
         <button
           v-if="isEditMode"
           class="btn btn-error btn-outline btn-sm gap-1 text-xs"
-          title="Xóa dòng đang chọn khỏi bảng"
+          :title="t('form.delete.selected.row.table')"
           @click="handleDeleteClick"
         >
-          <Trash2 class="w-3.5 h-3.5" /> Xóa dòng
+          <Trash2 class="w-3.5 h-3.5" /> {{ t('form.delete.row') }}
         </button>
 
         <button
           class="btn btn-ghost btn-sm gap-1 text-xs"
-          title="Xóa trắng form để chuẩn bị tạo dòng mới"
+          :title="t('form.clear.form.new.row')"
           @click="handleNewRowMode"
         >
-          <RotateCcw class="w-3.5 h-3.5" /> Làm mới
+          <RotateCcw class="w-3.5 h-3.5" /> {{ t('form.clear') }}
         </button>
       </div>
     </div>
@@ -1020,10 +1022,10 @@ onUnmounted(() => {
     <!-- ── Confirm Dialog Xóa Dòng ─────────────────────────────────────────── -->
     <ConfirmDialog
       v-model="showDeleteConfirm"
-      title="Xác nhận xóa dòng"
-      :message="`Bạn có chắc chắn muốn xóa dòng #${(props.selectedRowIndex ?? 0) + 1}? Bạn có thể hoàn tác bằng Ctrl+Z bất cứ lúc nào.`"
+      :title="t('form.confirm.delete')"
+      :message="t('form.delete.row.n.you.can', { n: (props.selectedRowIndex ?? 0) + 1 })"
       type="error"
-      confirm-text="Xóa dòng này"
+      :confirm-text="t('form.delete.this.row')"
       @confirm="confirmDelete"
     />
 
@@ -1046,7 +1048,7 @@ onUnmounted(() => {
           <button
             type="button"
             class="btn btn-ghost btn-xs btn-square flex-shrink-0"
-            title="Đóng"
+            :title="t('common.close')"
             @click="closeModal"
           >
             <X class="w-4 h-4" />
@@ -1060,20 +1062,20 @@ onUnmounted(() => {
             rows="10"
             autofocus
             class="textarea textarea-bordered w-full text-sm bg-base-100 rounded-lg resize-y scrollbar-thin leading-relaxed"
-            :placeholder="`Nhập ${modalHeader?.label ?? ''}...`"
+            :placeholder="t('form.enter.label', { label: modalHeader?.label ?? '' })"
           />
           <div class="flex items-center justify-between text-[11px] text-base-content/50">
-            <span>Thay đổi sẽ cập nhật trực tiếp vào ô tương ứng trên bản ghi.</span>
-            <span class="font-semibold text-base-content/70">{{ modalDraft.length }} ký tự</span>
+            <span>{{ t('form.changes.write.straight.into.matching') }}</span>
+            <span class="font-semibold text-base-content/70">{{ t('form.n.characters', { n: modalDraft.length }) }}</span>
           </div>
         </div>
 
         <!-- Modal Footer -->
         <div class="px-5 py-3 border-t border-base-300 bg-base-200/60 flex items-center justify-end gap-2 flex-shrink-0">
-          <button type="button" class="btn btn-sm btn-ghost" @click="closeModal">Hủy bỏ</button>
+          <button type="button" class="btn btn-sm btn-ghost" @click="closeModal">{{ t('common.cancel') }}</button>
           <button type="button" class="btn btn-sm btn-primary gap-1.5" @click="saveModal">
             <CheckCircle2 class="w-3.5 h-3.5" />
-            Lưu thay đổi
+            {{ t('form.save.changes') }}
           </button>
         </div>
       </div>

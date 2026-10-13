@@ -31,6 +31,9 @@ import { hasSheetOrder, readLogicalRange, scanLogicalRows } from '@/composables/
 import { useRowMarks, MARK_COLORS, type MarkColor } from '@/composables/rowMarks'
 import { useFormPresets } from '@/composables/useFormPresets'
 import type { PresetDraftError } from '@/utils/formPresets'
+import { useLocale } from '@/composables/useLocale'
+
+const { t } = useLocale()
 
 const workbookStore = useWorkbookStore()
 const selectionStore = useSelectionStore()
@@ -237,7 +240,7 @@ const headerChoices = computed(() => {
   const grid = ensureSourceGrid(sheet)
   return headerChoiceIndexes(grid.length, sheet.headerRowIndex).map((index) => ({
     index,
-    label: `Dòng ${index + 1} — ${previewGridLine(grid, index)}`,
+    label: t('common.row.n.preview', { n: index + 1, preview: previewGridLine(grid, index) }),
   }))
 })
 
@@ -1325,7 +1328,7 @@ function addNamedColumn() {
       v-show="showTableList"
       class="w-1.5 hover:w-2 bg-base-300 hover:bg-primary cursor-col-resize flex-shrink-0 transition-colors z-20 relative group select-none flex items-center justify-center"
       :class="{ 'bg-primary w-2': isResizingForm }"
-      title="Kéo sang trái/phải để co dãn độ rộng Form"
+      :title="t('table.drag.resize.form')"
       @mousedown="startResizeForm"
     >
       <div class="h-8 w-0.5 bg-base-content/30 group-hover:bg-primary-content rounded-full" />
@@ -1344,7 +1347,7 @@ function addNamedColumn() {
               <input
                 v-model="searchInput"
                 type="text"
-                placeholder="Tìm kiếm dòng..."
+                :placeholder="t('table.search.rows')"
                 class="input input-xs input-bordered w-full pl-7"
                 @input="onSearchChange"
                 @keydown.escape.prevent="clearSearch"
@@ -1355,11 +1358,11 @@ function addNamedColumn() {
               v-if="searchInput || filterCol || appliedRuleCount > 0"
               type="button"
               class="btn btn-ghost btn-xs gap-1 px-1.5"
-              title="Xóa bộ lọc"
+              :title="t('table.clear.filter')"
               @click="clearSearch"
             >
               <X class="w-3.5 h-3.5" />
-              Xóa
+              {{ t('common.remove') }}
             </button>
           </div>
 
@@ -1370,7 +1373,7 @@ function addNamedColumn() {
               class="select select-xs select-bordered text-xs"
               @change="onSearchChange"
             >
-              <option value="">Tất cả cột</option>
+              <option value="">{{ t('common.all.columns') }}</option>
               <option v-for="h in headers" :key="h.key" :value="h.key">
                 {{ h.label }}
               </option>
@@ -1384,7 +1387,7 @@ function addNamedColumn() {
             @click="openAdvancedFilter"
           >
             <Filter class="w-3.5 h-3.5" />
-            Nâng cao
+            {{ t('table.advanced') }}
             <span v-if="appliedRuleCount > 0" class="badge badge-xs">{{ appliedRuleCount }}</span>
           </button>
         </div>
@@ -1395,7 +1398,7 @@ function addNamedColumn() {
             class="select select-xs select-bordered max-w-[180px] text-xs"
             :value="activeSheet?.headerRowIndex ?? 0"
             :disabled="!!activeSheet?.paged"
-            title="Chọn dòng làm header cho sheet đang mở"
+            :title="t('table.choose.header.row.sheet')"
             @change="onChangeHeaderRow"
           >
             <option v-for="choice in headerChoices" :key="choice.index" :value="choice.index">
@@ -1405,29 +1408,29 @@ function addNamedColumn() {
         </label>
 
         <form v-if="rowTotal > 0" class="flex items-center gap-1" @submit.prevent="jumpToRowNumber">
-          <span class="opacity-60 whitespace-nowrap">Đến dòng</span>
+          <span class="opacity-60 whitespace-nowrap">{{ t('table.go.row') }}</span>
           <input
             v-model.number="jumpRowInput"
             type="number"
             min="1"
             :max="rowTotal"
             class="input input-xs input-bordered w-24 text-center"
-            title="Nhập số dòng rồi Enter"
-            aria-label="Số dòng cần đến"
+            :title="t('common.type.row.number.press.enter')"
+            :aria-label="t('table.go.row')"
           />
-          <button type="submit" class="btn btn-xs btn-ghost">Đến</button>
-          <button type="button" class="btn btn-xs btn-ghost" title="Đến dòng cuối cùng" @click="jumpToLastRow">
-            Cuối
+          <button type="submit" class="btn btn-xs btn-ghost">{{ t('table.go') }}</button>
+          <button type="button" class="btn btn-xs btn-ghost" :title="t('common.go.last.row')" @click="jumpToLastRow">
+            {{ t('common.last') }}
           </button>
-          <div class="flex items-center gap-0.5" title="Màu tô khi đánh dấu">
+          <div class="flex items-center gap-0.5" :title="t('table.mark.color')">
             <button
               v-for="item in MARK_COLORS"
               :key="item.id"
               type="button"
               class="mark-swatch"
               :class="[markClass(item.id), { 'is-selected': markColor === item.id }]"
-              :title="item.label"
-              :aria-label="`Màu ${item.label}`"
+              :title="t(item.label)"
+              :aria-label="t('mark.color', { name: t(item.label) })"
               @click="setCurrentMarkColor(item.id)"
             />
           </div>
@@ -1435,29 +1438,29 @@ function addNamedColumn() {
             type="button"
             class="btn btn-xs"
             :class="currentMarked ? 'btn-warning' : 'btn-ghost'"
-            title="Đánh dấu hoặc bỏ dấu dòng đang xem"
+            :title="t('table.mark.unmark.current.row')"
             :disabled="selectedRowIndex === null"
             @click="toggleCurrentMark"
           >
-            Đánh dấu
+            {{ t('table.mark') }}
           </button>
           <button
             type="button"
             class="btn btn-xs btn-ghost"
-            title="Đến dòng đánh dấu kế tiếp"
+            :title="t('table.go.next.marked.row')"
             :disabled="markCount === 0"
             @click="jumpToNextMark"
           >
-            Dấu kế<span v-if="markCount > 0"> ({{ markCount }})</span>
+            {{ t('table.next.mark') }}<span v-if="markCount > 0"> ({{ markCount }})</span>
           </button>
           <button
             type="button"
             class="btn btn-xs btn-ghost"
-            title="Xem và sửa các dòng đã đánh dấu"
+            :title="t('table.view.edit.marked.rows')"
             :disabled="markCount === 0"
             @click="openMarkList"
           >
-            Danh sách
+            {{ t('table.list') }}
           </button>
         </form>
 
@@ -1465,20 +1468,20 @@ function addNamedColumn() {
         <button
           v-if="!showForm"
           class="btn btn-ghost btn-xs gap-1 text-xs"
-          title="Hiện form"
+          :title="t('table.show.form')"
           @click="showForm = true"
         >
           <PanelLeftOpen class="w-3.5 h-3.5" />
-          <span class="hidden sm:inline">Hiện form</span>
+          <span class="hidden sm:inline">{{ t('table.show.form') }}</span>
         </button>
         <button
           class="btn btn-ghost btn-xs gap-1 text-xs"
-          title="Ẩn bảng"
+          :title="t('table.hide.table')"
           :disabled="!showForm"
           @click="hideTable"
         >
           <PanelRightClose class="w-3.5 h-3.5" />
-          <span class="hidden sm:inline">Ẩn bảng</span>
+          <span class="hidden sm:inline">{{ t('table.hide.table') }}</span>
         </button>
       </div>
 
@@ -1488,15 +1491,15 @@ function addNamedColumn() {
       >
         <div class="flex flex-wrap items-center gap-1.5 text-xs">
           <select v-model="draftJoin" class="select select-xs select-bordered">
-            <option value="and">Khớp tất cả</option>
-            <option value="or">Khớp một điều kiện</option>
+            <option value="and">{{ t('table.match.all') }}</option>
+            <option value="or">{{ t('table.match.any') }}</option>
           </select>
           <button type="button" class="btn btn-xs btn-ghost gap-1" @click="addFilterRule">
             <Plus class="w-3.5 h-3.5" />
             Thêm điều kiện
           </button>
-          <button type="button" class="btn btn-xs btn-primary" @click="applyAdvancedFilter">Áp dụng</button>
-          <button type="button" class="btn btn-xs btn-ghost" @click="clearAdvancedFilter">Xóa điều kiện</button>
+          <button type="button" class="btn btn-xs btn-primary" @click="applyAdvancedFilter">{{ t('common.apply') }}</button>
+          <button type="button" class="btn btn-xs btn-ghost" @click="clearAdvancedFilter">{{ t('table.clear.filters') }}</button>
         </div>
         <div v-for="rule in draftRules" :key="rule.id" class="flex flex-wrap items-center gap-1">
           <select
@@ -1525,7 +1528,7 @@ function addNamedColumn() {
             v-model="rule.value"
             class="select select-xs select-bordered"
           >
-            <option value="true">Đúng</option>
+            <option value="true">{{ t('table.true') }}</option>
             <option value="false">Sai</option>
           </select>
           <input
@@ -1616,8 +1619,8 @@ function addNamedColumn() {
                     type="button"
                     class="row-grip"
                     draggable="true"
-                    title="Kéo để sắp xếp dòng"
-                    aria-label="Kéo để sắp xếp dòng"
+                    :title="t('table.drag.reorder.row')"
+                    :aria-label="t('table.drag.reorder.row')"
                     @dragstart.stop="onRowDragStart(logicalAt(item.index), $event)"
                     @dragend.stop="onRowDragEnd"
                   >
@@ -1633,7 +1636,7 @@ function addNamedColumn() {
                     type="button"
                     class="row-index"
                     :class="{ 'is-marked': !!activeSheet && rowMarks.isMarked(activeSheet.id, logicalAt(item.index)) }"
-                    title="Đánh dấu dòng này bằng màu đang chọn"
+                    :title="t('table.mark.row.selected.color')"
                     @click.stop="toggleRowMark(logicalAt(item.index))"
                   >
                     {{ logicalAt(item.index) + 1 }}
@@ -1695,7 +1698,7 @@ function addNamedColumn() {
             :style="{ width: `${width}px` }"
             :title="index >= 1 && headers[index - 1] ? `Tổng ${headers[index - 1].label}` : ''"
           >
-            <template v-if="index === 0">Tổng</template>
+            <template v-if="index === 0">{{ t('table.total') }}</template>
             <template v-else-if="headers[index - 1]">
               {{ columnSum(headers[index - 1]) }}
             </template>
@@ -1716,7 +1719,7 @@ function addNamedColumn() {
         <div class="flex items-center justify-between px-4 py-3 border-b border-base-300">
           <div class="flex items-center gap-2">
             <Columns3 class="w-4 h-4 text-primary" />
-            <h3 class="font-bold text-sm">Cột header</h3>
+            <h3 class="font-bold text-sm">{{ t('table.header.columns') }}</h3>
           </div>
           <button class="btn btn-ghost btn-xs btn-circle" title="Đóng" @click="showColumnEditor = false">
             <X class="w-4 h-4" />
@@ -1744,10 +1747,10 @@ function addNamedColumn() {
               :value="h.dataType || 'text'"
               @change="onHeaderSetType(h.key, ($event.target as HTMLSelectElement).value as ColumnHeader['dataType'])"
             >
-              <option value="text">Chữ</option>
-              <option value="number">Số</option>
-              <option value="date">Ngày</option>
-              <option value="boolean">Đúng/Sai</option>
+              <option value="text">{{ t('table.text') }}</option>
+              <option value="number">{{ t('table.number') }}</option>
+              <option value="date">{{ t('table.date') }}</option>
+              <option value="boolean">{{ t('table.yes.no') }}</option>
             </select>
             <select
               v-if="h.dataType === 'date'"
@@ -1788,8 +1791,8 @@ function addNamedColumn() {
       <div class="modal-box flex h-[min(820px,90vh)] w-[min(1080px,94vw)] max-w-none flex-col border border-base-300 p-0">
         <div class="flex items-center justify-between gap-3 border-b border-base-300 px-4 py-3">
           <div>
-            <h3 class="text-sm font-bold">Dòng đã đánh dấu</h3>
-            <p class="text-xs opacity-60">Chọn một dòng để sửa bằng form nhập liệu. Xóa chỉ bỏ dấu.</p>
+            <h3 class="text-sm font-bold">{{ t('table.marked.rows') }}</h3>
+            <p class="text-xs opacity-60">{{ t('table.pick.row.edit.form.delete') }}</p>
           </div>
           <button type="button" class="btn btn-ghost btn-xs btn-square" title="Đóng" @click="closeMarkList">
             <X class="w-4 h-4" />
@@ -1829,8 +1832,8 @@ function addNamedColumn() {
                       type="button"
                       class="mark-swatch"
                       :class="[markClass(color.id), { 'is-selected': item.color === color.id }]"
-                      :title="color.label"
-                      :aria-label="`Đổi sang màu ${color.label}`"
+                      :title="t(color.label)"
+                      :aria-label="t('mark.switch', { name: t(color.label) })"
                       @click="recolorMarkedRow(item.index, color.id)"
                     />
                   </div>

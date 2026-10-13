@@ -1,11 +1,11 @@
 import { ref } from 'vue'
 
 export const MARK_COLORS = [
-  { id: 'amber', label: 'Vàng' },
-  { id: 'emerald', label: 'Xanh lá' },
-  { id: 'sky', label: 'Xanh dương' },
-  { id: 'rose', label: 'Đỏ' },
-  { id: 'violet', label: 'Tím' },
+  { id: 'amber', label: 'common.amber' },
+  { id: 'emerald', label: 'common.green' },
+  { id: 'sky', label: 'common.blue' },
+  { id: 'rose', label: 'common.red' },
+  { id: 'violet', label: 'common.purple' },
 ] as const
 
 export type MarkColor = (typeof MARK_COLORS)[number]['id']
