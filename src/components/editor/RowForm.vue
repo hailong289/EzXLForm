@@ -4,7 +4,7 @@ import {
   Plus,
   Trash2,
   RotateCcw,
-  ChevronDown,
+  ChevronUp,
   ChevronLeft,
   ChevronRight,
   Check,
@@ -29,9 +29,22 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import type { ColumnHeader, RowData } from '@/types/excel'
 import { DATE_FORMATS, DEFAULT_DATE_FORMAT, formatDateValue, parseDateToIso } from '@/utils/dateFormat'
 import { coerceCellValue, coerceRowData } from '@/utils/cellValue'
+import { useImageQuickLook } from '@/composables/imageQuickLook'
 import { useLocale } from '@/composables/useLocale'
+import { imageLabel, imageSource } from '@/utils/imageSource'
 
 const { t } = useLocale()
+const quickLook = useImageQuickLook()
+
+function fieldImage(key: string): string | null {
+  return imageSource(formData.value[key])
+}
+
+function openFieldImage(key: string) {
+  const source = fieldImage(key)
+  if (!source) return
+  quickLook.open(source, imageLabel(source))
+}
 
 const props = defineProps<{
   headers: ColumnHeader[]
@@ -776,17 +789,17 @@ onUnmounted(() => {
       <div
         v-else
         data-field-grid
-        class="grid gap-3 items-stretch"
+        class="grid w-full min-w-0 gap-3 items-stretch"
         :style="{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }"
       >
         <div
           v-for="(h, index) in filteredHeaders"
           :key="h.key"
           data-field-card
-          class="bg-base-100 hover:bg-base-200/40 transition-colors p-3 rounded-xl border border-base-300 shadow-sm flex flex-col"
+          class="min-w-0 max-w-full overflow-hidden bg-base-100 hover:bg-base-200/40 transition-colors p-3 rounded-xl border border-base-300 shadow-sm flex flex-col"
           :class="{ 'border-error/60': !!visibleFieldError(h.key) }"
         >
-          <div class="flex items-center justify-between mb-1 gap-2 shrink-0">
+          <div class="mb-1 flex min-w-0 shrink-0 items-center justify-between gap-2">
             <label :for="`field-${index}`" class="text-xs font-bold text-base-content/90 leading-tight flex items-center gap-1.5 min-w-0" :title="h.label">
               <Type v-if="h.dataType === 'text' || !h.dataType" class="w-3.5 h-3.5 text-primary opacity-70 flex-shrink-0" />
               <Hash v-else-if="h.dataType === 'number'" class="w-3.5 h-3.5 text-info opacity-70 flex-shrink-0" />
@@ -830,9 +843,35 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <div class="field-body mt-1.5 min-h-0 flex-1">
+          <div class="field-body mt-1.5 min-h-0 min-w-0 flex-1">
+            <div
+              v-if="(h.dataType === 'text' || !h.dataType) && fieldImage(h.key)"
+              class="flex w-full min-w-0 flex-col gap-1.5"
+            >
+              <button
+                type="button"
+                class="flex h-24 w-full items-center justify-center overflow-hidden rounded-lg border border-base-300 bg-base-200/60"
+                :aria-label="t('image.quicklook')"
+                @click="openFieldImage(h.key)"
+              >
+                <img
+                  :src="fieldImage(h.key)!"
+                  alt=""
+                  class="max-h-full max-w-full object-contain"
+                />
+              </button>
+              <input
+                :id="`field-${index}`"
+                :value="fieldImage(h.key)!"
+                class="input input-bordered input-sm h-8 min-h-8 w-full min-w-0 text-xs"
+                :aria-label="h.label"
+                :title="fieldImage(h.key)!"
+                @input="onFieldInput(h.key, ($event.target as HTMLInputElement).value)"
+                @blur="markTouched(h.key)"
+              />
+            </div>
             <textarea
-              v-if="h.dataType === 'text' || !h.dataType"
+              v-else-if="h.dataType === 'text' || !h.dataType"
               :id="`field-${index}`"
               :key="`${props.sheetId ?? ''}-${props.selectedRowIndex ?? 'new'}-${h.key}`"
               :value="formData[h.key]"
@@ -922,46 +961,36 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- ── Cụm Nút Hành Động [Tạo Dòng Mới] [Xóa Dòng] [Làm Mới] ─────────────── -->
     <div
       v-if="hasRows"
-      class="p-3 bg-base-200/90 border-t border-base-300 flex items-center justify-between gap-2 flex-wrap"
+      class="flex flex-col gap-1.5 border-t border-base-300 bg-base-200/50 px-3 py-2.5"
     >
-      <!-- Nút Tạo dòng mới -->
       <button
         v-if="props.rowIsNew"
         type="button"
-        class="btn btn-warning btn-sm gap-1.5 text-xs font-bold"
+        class="btn btn-warning btn-sm h-9 min-h-9 w-full gap-1.5 text-xs font-semibold"
         :title="t('form.save.new.row.clear.highlight')"
         @click="handleCommit"
       >
         <CheckCircle2 class="w-4 h-4" /> {{ t('form.save.new.row') }}
       </button>
-      <button
-        v-if="isEditMode"
-        type="button"
-        class="btn btn-primary btn-sm flex-1 gap-1.5 text-xs font-bold shadow-xs min-w-[140px]"
-        :title="t('form.copy.row.n.row.just', { n: (props.selectedRowIndex ?? 0) + 1 })"
-        :disabled="!props.selectedRow"
-        @click="handleCreate('after', 'copy')"
-      >
-        <Copy class="w-4 h-4" />
-        {{ t('form.copy.below') }}
-      </button>
-      <div v-if="isEditMode" class="dropdown dropdown-top min-w-[140px] flex-1">
+
+      <div v-if="isEditMode" class="dropdown dropdown-top w-full">
         <button
           type="button"
           tabindex="0"
-          class="btn btn-secondary btn-sm w-full gap-1.5 text-xs font-bold"
+          class="btn btn-primary btn-sm h-9 min-h-9 w-full justify-between px-3 text-xs font-semibold"
           :title="t('form.add.blank.row.right.after', { n: (props.selectedRowIndex ?? 0) + 1 })"
         >
-          <Plus class="w-4 h-4" />
-          {{ t('form.add.row.after.n', { n: (props.selectedRowIndex ?? 0) + 1 }) }}
-          <ChevronDown class="w-3.5 h-3.5 opacity-80" />
+          <span class="inline-flex min-w-0 items-center gap-1.5">
+            <Plus class="h-4 w-4 shrink-0" />
+            <span class="truncate">{{ t('form.add.row.after.n', { n: (props.selectedRowIndex ?? 0) + 1 }) }}</span>
+          </span>
+          <ChevronUp class="h-3.5 w-3.5 shrink-0 opacity-70" />
         </button>
         <ul
           tabindex="0"
-          class="dropdown-content menu z-50 mb-1 w-56 rounded-box border border-base-300 bg-base-100 p-1 shadow-lg"
+          class="dropdown-content menu z-50 mb-1 w-full rounded-box border border-base-300 bg-base-100 p-1 shadow-lg"
         >
           <li class="menu-title px-2 py-1 text-[10px]">{{ t('form.choose.form.type') }}</li>
           <li>
@@ -978,43 +1007,57 @@ onUnmounted(() => {
           </li>
         </ul>
       </div>
+
+      <div v-if="isEditMode" class="grid grid-cols-2 gap-1.5">
+        <button
+          type="button"
+          class="btn btn-outline btn-sm h-8 min-h-8 gap-1.5 px-2 text-xs font-medium"
+          :title="t('form.copy.row.n.row.just', { n: (props.selectedRowIndex ?? 0) + 1 })"
+          :disabled="!props.selectedRow"
+          @click="handleCreate('after', 'copy')"
+        >
+          <Copy class="h-3.5 w-3.5 shrink-0" />
+          <span class="truncate">{{ t('form.copy.below') }}</span>
+        </button>
+        <button
+          type="button"
+          class="btn btn-outline btn-sm h-8 min-h-8 gap-1.5 px-2 text-xs font-medium"
+          :title="t('form.add.blank.row.end.table')"
+          @click="handleCreate('end', 'blank')"
+        >
+          <Plus class="h-3.5 w-3.5 shrink-0" />
+          <span class="truncate">{{ t('form.add.end') }}</span>
+        </button>
+      </div>
+
       <button
         v-if="!isEditMode"
         type="button"
-        class="btn btn-primary btn-sm flex-1 gap-1.5 text-xs font-bold shadow-xs min-w-[140px]"
+        class="btn btn-primary btn-sm h-9 min-h-9 w-full gap-1.5 text-xs font-semibold"
         :title="t('form.add.current.entry.end.table')"
         @click="handleCreate('end', 'copy')"
       >
         <Plus class="w-4 h-4" />
         {{ t('form.create.row') }}
       </button>
-      <button
-        v-if="isEditMode"
-        type="button"
-        class="btn btn-outline btn-sm gap-1 text-xs"
-        :title="t('form.add.blank.row.end.table')"
-        @click="handleCreate('end', 'blank')"
-      >
-        <Plus class="w-3.5 h-3.5" /> {{ t('form.add.end') }}
-      </button>
 
-      <!-- Nhóm nút phụ: Xóa & Làm mới -->
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-1">
         <button
           v-if="isEditMode"
-          class="btn btn-error btn-outline btn-sm gap-1 text-xs"
+          type="button"
+          class="btn btn-ghost btn-sm h-8 min-h-8 gap-1 px-2 text-xs font-medium text-error hover:bg-error/10"
           :title="t('form.delete.selected.row.table')"
           @click="handleDeleteClick"
         >
-          <Trash2 class="w-3.5 h-3.5" /> {{ t('form.delete.row') }}
+          <Trash2 class="h-3.5 w-3.5" /> {{ t('form.delete.row') }}
         </button>
-
         <button
-          class="btn btn-ghost btn-sm gap-1 text-xs"
+          type="button"
+          class="btn btn-ghost btn-sm h-8 min-h-8 gap-1 px-2 text-xs font-medium text-base-content/70"
           :title="t('form.clear.form.new.row')"
           @click="handleNewRowMode"
         >
-          <RotateCcw class="w-3.5 h-3.5" /> {{ t('form.clear') }}
+          <RotateCcw class="h-3.5 w-3.5" /> {{ t('form.clear') }}
         </button>
       </div>
     </div>

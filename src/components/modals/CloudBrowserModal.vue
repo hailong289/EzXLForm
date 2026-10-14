@@ -102,7 +102,7 @@ function noteIfEmpty() {
 }
 
 async function restoreSession(next: CloudProviderId) {
-  const label = next === 'google' ? googleAccountLabel() : await microsoftAccountLabel()
+  const label = next === 'google' ? await googleAccountLabel() : await microsoftAccountLabel()
   if (!label) return
   account.value = label
   await reload()
@@ -114,7 +114,7 @@ async function signIn(next: CloudProviderId) {
   await run(next === 'google' ? 'Đang mở Google Drive...' : 'Đang mở OneDrive...', async () => {
     if (next === 'google') {
       files.value = await listGoogleFiles(mode.value === 'live')
-      account.value = googleAccountLabel() || 'Google'
+      account.value = (await googleAccountLabel()) || 'Google'
     } else {
       files.value = await listRecentExcel()
       account.value = (await microsoftAccountLabel()) || 'Microsoft'
@@ -128,7 +128,7 @@ async function reload() {
   await run('Đang tải danh sách...', async () => {
     files.value =
       provider.value === 'google' ? await listGoogleFiles(mode.value === 'live') : await listRecentExcel()
-    if (provider.value === 'google') account.value = googleAccountLabel() || account.value
+    if (provider.value === 'google') account.value = (await googleAccountLabel()) || account.value
     else account.value = (await microsoftAccountLabel()) || account.value
     noteIfEmpty()
   })
@@ -163,7 +163,7 @@ async function openFromLink() {
 }
 
 async function signOut() {
-  if (provider.value === 'google') signOutGoogle()
+  if (provider.value === 'google') await signOutGoogle()
   if (provider.value === 'microsoft') await signOutMicrosoft()
   account.value = ''
   files.value = []

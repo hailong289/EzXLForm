@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import type { CellValue, ColumnHeader } from '@/types/excel'
+import { useImageQuickLook } from '@/composables/imageQuickLook'
+import { useLocale } from '@/composables/useLocale'
 import { DEFAULT_DATE_FORMAT, formatDateValue, parseDateToIso } from '@/utils/dateFormat'
+import { imageLabel, imageSource } from '@/utils/imageSource'
 
 const props = defineProps<{
   value: CellValue
@@ -20,6 +23,19 @@ const emit = defineEmits<{
 
 const localVal = ref<string>('')
 const inputRef = ref<HTMLInputElement | null>(null)
+const thumbFailed = ref(false)
+const { t } = useLocale()
+const quickLook = useImageQuickLook()
+const preview = computed(() => imageSource(props.value))
+
+watch(preview, () => {
+  thumbFailed.value = false
+})
+
+function openPreview() {
+  if (!preview.value) return
+  quickLook.open(preview.value, imageLabel(preview.value))
+}
 
 watch(
   () => props.isEditing,
@@ -127,7 +143,18 @@ function formatDisplay(val: CellValue): string {
       }"
       :title="props.value != null && props.value !== '' ? String(props.value) : 'Bấm đúp để sửa trong ô'"
     >
-      {{ formatDisplay(props.value) }}
+      <button
+        v-if="preview && !thumbFailed"
+        type="button"
+        class="mr-1.5 h-5 w-5 shrink-0 overflow-hidden rounded border border-base-300 bg-base-200"
+        :aria-label="t('image.quicklook')"
+        :title="t('image.quicklook')"
+        @click.stop="openPreview"
+        @dblclick.stop
+      >
+        <img :src="preview" alt="" class="h-full w-full object-cover" @error="thumbFailed = true" />
+      </button>
+      <span class="truncate">{{ formatDisplay(props.value) }}</span>
     </div>
   </td>
 </template>

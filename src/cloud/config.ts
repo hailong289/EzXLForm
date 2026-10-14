@@ -14,6 +14,14 @@ export function googleAppId(): string {
   return /^\d+$/.test(projectNumber) ? projectNumber : ''
 }
 
+export function googleTokenKey(): string {
+  return import.meta.env.VITE_GOOGLE_TOKEN_KEY?.trim() ?? ''
+}
+
+export function googleClientSecret(): string {
+  return import.meta.env.VITE_GOOGLE_CLIENT_SECRET?.trim() ?? ''
+}
+
 export function microsoftClientId(): string {
   return import.meta.env.VITE_MICROSOFT_CLIENT_ID?.trim() ?? ''
 }

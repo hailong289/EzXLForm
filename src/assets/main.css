@@ -77,7 +77,15 @@
 }
 
 /* Ô form: cao tối thiểu một dòng, ô cùng hàng giãn bằng nhau */
+[data-field-card] {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
 .form-text-input {
+  min-width: 0;
+  max-width: 100%;
   min-height: 2rem;
   height: auto;
   line-height: 1.25rem;
@@ -103,7 +111,10 @@ textarea.form-text-input {
 .field-body {
   display: flex;
   flex: 0 0 auto;
-  align-items: flex-start;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  min-width: 0;
   min-height: 2rem;
 }
 
@@ -189,14 +200,22 @@ input.form-text-input.input {
   position: sticky;
   left: 0;
   z-index: 4;
-  width: 108px;
-  min-width: 108px;
-  max-width: 108px;
+  width: 104px;
+  min-width: 104px;
+  max-width: 104px;
   padding: 0 !important;
   text-align: center;
   vertical-align: middle;
   background: oklch(var(--b1));
   box-sizing: border-box;
+}
+
+.editor-grid tbody tr.data-row td.col-check {
+  overflow: visible;
+}
+
+.editor-grid tbody tr.data-row td.col-check:has(.mark-pop) {
+  z-index: 8;
 }
 
 .editor-grid thead .col-check {
@@ -219,56 +238,160 @@ input.form-text-input.input {
   left: 0;
 }
 
+.editor-grid .row-tools {
+  display: grid;
+  grid-template-columns: 16px 16px 16px 22px;
+  align-items: center;
+  justify-content: center;
+  column-gap: 6px;
+  width: 104px;
+  height: 32px;
+  margin: 0 auto;
+}
+
+.editor-grid .row-tool-slot {
+  width: 16px;
+  height: 16px;
+}
+
+.editor-grid .row-mark-wrap {
+  position: relative;
+  width: 16px;
+  height: 16px;
+}
+
+.editor-grid .row-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: oklch(var(--bc) / 0.28);
+}
+
+.editor-grid .row-mark.is-marked {
+  color: #f59e0b;
+}
+
+.editor-grid .row-mark.is-marked svg {
+  fill: currentColor;
+}
+
+.editor-grid .row-mark.mark-index-emerald { color: #10b981; }
+.editor-grid .row-mark.mark-index-sky { color: #0ea5e9; }
+.editor-grid .row-mark.mark-index-rose { color: #f43f5e; }
+.editor-grid .row-mark.mark-index-violet { color: #8b5cf6; }
+
 .editor-grid .row-index {
   font-variant-numeric: tabular-nums;
   font-size: 11px;
   line-height: 1;
   opacity: 0.55;
-  min-width: 2.75rem;
+  width: 22px;
   text-align: right;
   background: transparent;
   border: 0;
   padding: 0;
-  cursor: pointer;
-}
-
-.editor-grid .row-index.is-marked {
-  opacity: 1;
-  font-weight: 700;
-  color: oklch(var(--wa));
 }
 
 .editor-grid tbody tr.mark-amber td {
-  background-color: color-mix(in oklab, #f59e0b 34%, oklch(var(--b1)));
+  background-color: color-mix(in oklab, #f59e0b 28%, oklch(var(--b1)));
 }
 .editor-grid tbody tr.mark-emerald td {
-  background-color: color-mix(in oklab, #10b981 34%, oklch(var(--b1)));
+  background-color: color-mix(in oklab, #10b981 26%, oklch(var(--b1)));
 }
 .editor-grid tbody tr.mark-sky td {
-  background-color: color-mix(in oklab, #0ea5e9 34%, oklch(var(--b1)));
+  background-color: color-mix(in oklab, #0ea5e9 26%, oklch(var(--b1)));
 }
 .editor-grid tbody tr.mark-rose td {
-  background-color: color-mix(in oklab, #f43f5e 32%, oklch(var(--b1)));
+  background-color: color-mix(in oklab, #f43f5e 24%, oklch(var(--b1)));
 }
 .editor-grid tbody tr.mark-violet td {
-  background-color: color-mix(in oklab, #8b5cf6 32%, oklch(var(--b1)));
+  background-color: color-mix(in oklab, #8b5cf6 24%, oklch(var(--b1)));
+}
+
+.editor-grid tbody tr.mark-amber td:first-child { box-shadow: inset 3px 0 0 #f59e0b; }
+.editor-grid tbody tr.mark-emerald td:first-child { box-shadow: inset 3px 0 0 #10b981; }
+.editor-grid tbody tr.mark-sky td:first-child { box-shadow: inset 3px 0 0 #0ea5e9; }
+.editor-grid tbody tr.mark-rose td:first-child { box-shadow: inset 3px 0 0 #f43f5e; }
+.editor-grid tbody tr.mark-violet td:first-child { box-shadow: inset 3px 0 0 #8b5cf6; }
+
+.mark-tools > .btn {
+  position: relative;
+}
+
+.mark-count {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 12px;
+  height: 12px;
+  padding: 0 2px;
+  border-radius: 999px;
+  background: oklch(var(--p));
+  color: oklch(var(--pc));
+  font-size: 9px;
+  line-height: 12px;
+  text-align: center;
+}
+
+.mark-palette {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 4px;
+}
+
+.mark-pop {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid oklch(var(--b3));
+  border-radius: 0.6rem;
+  background: oklch(var(--b1));
+  box-shadow: 0 8px 24px oklch(var(--bc) / 0.12);
+  transform: translateX(-50%);
+}
+
+.mark-pop .mark-swatch {
+  width: 16px;
+  height: 16px;
 }
 
 .mark-swatch {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 999px;
-  border: 2px solid transparent;
+  border: 2px solid oklch(var(--b1));
+  box-shadow: 0 0 0 1px oklch(var(--bc) / 0.22);
   padding: 0;
+  cursor: pointer;
 }
 .mark-swatch.is-selected {
-  border-color: oklch(var(--bc));
+  box-shadow: 0 0 0 2px oklch(var(--bc));
+}
+.mark-swatch:hover {
+  transform: scale(1.12);
 }
 .mark-swatch-amber { background: #f59e0b; }
 .mark-swatch-emerald { background: #10b981; }
 .mark-swatch-sky { background: #0ea5e9; }
 .mark-swatch-rose { background: #f43f5e; }
 .mark-swatch-violet { background: #8b5cf6; }
+
+.mark-card-amber { border-left: 3px solid #f59e0b; }
+.mark-card-emerald { border-left: 3px solid #10b981; }
+.mark-card-sky { border-left: 3px solid #0ea5e9; }
+.mark-card-rose { border-left: 3px solid #f43f5e; }
+.mark-card-violet { border-left: 3px solid #8b5cf6; }
 
 .editor-grid .cell-center {
   display: flex;
@@ -318,6 +441,27 @@ input.form-text-input.input {
 
 .editor-grid tbody tr.row-checked td {
   background: oklch(var(--p) / 0.08);
+}
+
+.editor-grid tbody tr.mark-amber:hover td,
+.editor-grid tbody tr.mark-amber.row-active td {
+  background-color: color-mix(in oklab, #f59e0b 40%, oklch(var(--b1)));
+}
+.editor-grid tbody tr.mark-emerald:hover td,
+.editor-grid tbody tr.mark-emerald.row-active td {
+  background-color: color-mix(in oklab, #10b981 38%, oklch(var(--b1)));
+}
+.editor-grid tbody tr.mark-sky:hover td,
+.editor-grid tbody tr.mark-sky.row-active td {
+  background-color: color-mix(in oklab, #0ea5e9 38%, oklch(var(--b1)));
+}
+.editor-grid tbody tr.mark-rose:hover td,
+.editor-grid tbody tr.mark-rose.row-active td {
+  background-color: color-mix(in oklab, #f43f5e 36%, oklch(var(--b1)));
+}
+.editor-grid tbody tr.mark-violet:hover td,
+.editor-grid tbody tr.mark-violet.row-active td {
+  background-color: color-mix(in oklab, #8b5cf6 36%, oklch(var(--b1)));
 }
 
 /* Loading overlay */

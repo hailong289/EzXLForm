@@ -11,6 +11,7 @@ import {
   Columns3,
   Plus,
   Trash2,
+  Bookmark,
 } from 'lucide-vue-next'
 import { useWorkbookStore } from '@/stores/workbookStore'
 import { useSelectionStore } from '@/stores/selectionStore'
@@ -18,6 +19,7 @@ import { useAppConfigStore } from '@/stores/appConfigStore'
 import { useProgressTaskStore } from '@/stores/progressTaskStore'
 import { useVirtualRows } from '@/composables/useVirtualRows'
 import { useHistory } from '@/composables/useHistory'
+import ImageQuickLook from './ImageQuickLook.vue'
 import RowForm from './RowForm.vue'
 import FormPresetDialog from './FormPresetDialog.vue'
 import TableHeaderCell from './TableHeaderCell.vue'
@@ -28,7 +30,7 @@ import { ensureSourceGrid, headerChoiceIndexes, previewGridLine, sheetRowCount }
 import { DATE_FORMATS, DEFAULT_DATE_FORMAT } from '@/utils/dateFormat'
 import { activeFilterRules, operatorsFor, operatorNeedsValue, rowMatchesFilters } from '@/utils/rowFilter'
 import { hasSheetOrder, readLogicalRange, scanLogicalRows } from '@/composables/rowPageStore'
-import { useRowMarks, MARK_COLORS, type MarkColor } from '@/composables/rowMarks'
+import { MARK_COLORS, useRowMarks, type MarkColor } from '@/composables/rowMarks'
 import { useFormPresets } from '@/composables/useFormPresets'
 import type { PresetDraftError } from '@/utils/formPresets'
 import { useLocale } from '@/composables/useLocale'
@@ -101,6 +103,7 @@ function measureColumns() {
 }
 
 function onTableScroll() {
+  colorPickerIndex.value = null
   if (syncingTableScroll || !tableScrollRef.value || !sumScrollRef.value) return
   syncingTableScroll = true
   sumScrollRef.value.scrollLeft = tableScrollRef.value.scrollLeft
@@ -294,6 +297,7 @@ watch(
 )
 
 function clearSearch() {
+  window.clearTimeout(applyTimer)
   searchInput.value = ''
   filterCol.value = ''
   draftJoin.value = 'and'
@@ -310,7 +314,7 @@ function blankRule(): AdvancedFilterRule {
   return {
     id: `rule_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     columnKey: headers.value[0]?.key ?? '',
-    operator: 'contains',
+    operator: 'like',
     value: '',
   }
 }
@@ -332,11 +336,15 @@ function removeFilterRule(id: string) {
   if (draftRules.value.length === 0) draftRules.value = [blankRule()]
 }
 
+function ruleHeader(rule: AdvancedFilterRule) {
+  return headers.value.find((item) => item.key === rule.columnKey)
+}
+
 function onFilterColumnChange(rule: AdvancedFilterRule) {
-  const header = headers.value.find((item) => item.key === rule.columnKey)
+  const header = ruleHeader(rule)
   const operators = operatorsFor(header)
   if (!operators.some((item) => item.id === rule.operator)) {
-    rule.operator = operators[0]?.id ?? 'contains'
+    rule.operator = operators[0]?.id ?? 'like'
   }
   if (header?.dataType === 'boolean' && operatorNeedsValue(rule.operator) && rule.value !== 'true' && rule.value !== 'false') {
     rule.value = 'true'
@@ -351,20 +359,42 @@ watch(
   { deep: true },
 )
 
+let applyTimer = 0
+
 function applyAdvancedFilter() {
-  appConfigStore.setAdvancedFilter(draftRules.value.map((rule) => ({ ...rule })), draftJoin.value)
+  appConfigStore.setAdvancedFilter(activeFilterRules(draftRules.value).map((rule) => ({ ...rule })), draftJoin.value)
+}
+
+function scheduleApplyFilter() {
+  window.clearTimeout(applyTimer)
+  applyTimer = window.setTimeout(() => {
+    if (!showAdvancedFilter.value) return
+    applyAdvancedFilter()
+  }, 200)
 }
 
 function clearAdvancedFilter() {
+  window.clearTimeout(applyTimer)
   draftJoin.value = 'and'
   draftRules.value = [blankRule()]
   appConfigStore.setAdvancedFilter([], 'and')
 }
 
+watch([draftRules, draftJoin], scheduleApplyFilter, { deep: true })
+
 const appliedRuleCount = computed(() => activeFilterRules(appConfigStore.advancedRules).length)
 
+const onlyMarked = ref(false)
+
 function filtersAreActive(): boolean {
-  return Boolean(appConfigStore.searchQuery.trim()) || appliedRuleCount.value > 0
+  return Boolean(appConfigStore.searchQuery.trim()) || appliedRuleCount.value > 0 || onlyMarked.value
+}
+
+function passesMarkFilter(index: number): boolean {
+  if (!onlyMarked.value) return true
+  const sheetId = activeSheet.value?.id
+  if (!sheetId) return false
+  return rowMarks.isMarked(sheetId, index)
 }
 
 // Filtered Rows
@@ -376,6 +406,7 @@ const filteredRowIndices = computed(() => {
   const indices: number[] = []
   allRows.value.forEach((row, index) => {
     if (
+      passesMarkFilter(index) &&
       rowMatchesFilters(
         row,
         headers.value,
@@ -420,8 +451,7 @@ function scrollToLogical(index: number) {
 
 const jumpRowInput = ref<number | ''>('')
 const markColor = ref<MarkColor>('amber')
-const showMarkList = ref(false)
-const markPreviews = ref<Record<number, string>>({})
+const colorPickerIndex = ref<number | null>(null)
 
 function jumpToRowNumber() {
   if (rowTotal.value <= 0) return
@@ -439,88 +469,70 @@ function jumpToLastRow() {
   selectRowForEdit(logical)
 }
 
-const currentMarked = computed(() => {
-  const sheetId = activeSheet.value?.id
-  if (!sheetId || selectedRowIndex.value === null) return false
-  return rowMarks.isMarked(sheetId, selectedRowIndex.value)
-})
-
 const markCount = computed(() => (activeSheet.value ? rowMarks.count(activeSheet.value.id) : 0))
 
-function toggleRowMark(index: number) {
+watch(markCount, (count) => {
+  if (count === 0) onlyMarked.value = false
+})
+
+function isRowMarked(index: number): boolean {
   const sheetId = activeSheet.value?.id
+  if (!sheetId) return false
+  return rowMarks.isMarked(sheetId, index)
+}
+
+function openMarkColors(index: number) {
+  const sheetId = activeSheet.value?.id
+  if (sheetId && rowMarks.isMarked(sheetId, index)) {
+    rowMarks.removeMark(sheetId, index)
+    colorPickerIndex.value = null
+    return
+  }
+  colorPickerIndex.value = colorPickerIndex.value === index ? null : index
+}
+
+function rowMarkColor(index: number): MarkColor | null {
+  const sheetId = activeSheet.value?.id
+  if (!sheetId) return null
+  return rowMarks.colorOf(sheetId, index)
+}
+
+function pickRowColor(index: number, color: MarkColor) {
+  const sheetId = activeSheet.value?.id
+  colorPickerIndex.value = null
   if (!sheetId || index < 0 || index >= rowTotal.value) return
-  rowMarks.toggle(sheetId, index, markColor.value)
-}
-
-function toggleCurrentMark() {
-  if (selectedRowIndex.value === null) return
-  toggleRowMark(selectedRowIndex.value)
-}
-
-function setCurrentMarkColor(color: MarkColor) {
   markColor.value = color
-  const sheetId = activeSheet.value?.id
-  if (!sheetId || selectedRowIndex.value === null) return
-  if (rowMarks.isMarked(sheetId, selectedRowIndex.value)) {
-    rowMarks.setMark(sheetId, selectedRowIndex.value, color)
+  if (rowMarks.colorOf(sheetId, index) === color) {
+    rowMarks.removeMark(sheetId, index)
+    return
   }
-}
-
-function markPreviewText(row: RowData): string {
-  const bits = headers.value
-    .slice(0, 4)
-    .map((header) => {
-      const value = row[header.key]
-      if (value == null || value === '') return ''
-      return String(value)
-    })
-    .filter(Boolean)
-  return bits.join(' · ') || '(trống)'
-}
-
-async function openMarkList() {
-  const sheet = activeSheet.value
-  if (!sheet) return
-  showMarkList.value = true
-  const indexes = rowMarks.list(sheet.id).map((item) => item.index)
-  const previews: Record<number, string> = {}
-  try {
-    if (sheet.paged && indexes.length > 0) {
-      const loaded = await readLogicalIndexes(sheet.id, indexes)
-      for (const index of indexes) previews[index] = markPreviewText(loaded.get(index) ?? {})
-    } else {
-      for (const index of indexes) previews[index] = markPreviewText(allRows.value[index] ?? {})
-    }
-    markPreviews.value = previews
-  } finally {
-    const current = selectedRowIndex.value
-    const focus = current !== null && indexes.includes(current) ? current : indexes[0]
-    if (focus !== undefined) selectRowForEdit(focus)
-  }
-}
-
-function closeMarkList() {
-  showMarkList.value = false
-}
-
-function removeMarkedRow(index: number) {
-  const sheetId = activeSheet.value?.id
-  if (!sheetId) return
-  rowMarks.removeMark(sheetId, index)
-  const next = { ...markPreviews.value }
-  delete next[index]
-  markPreviews.value = next
-}
-
-function recolorMarkedRow(index: number, color: MarkColor) {
-  const sheetId = activeSheet.value?.id
-  if (!sheetId) return
   rowMarks.setMark(sheetId, index, color)
 }
 
+function onMarkPickerOutside(event: PointerEvent) {
+  const target = event.target
+  if (target instanceof Element && target.closest('.row-mark-wrap')) return
+  colorPickerIndex.value = null
+}
+
+watch(colorPickerIndex, (index) => {
+  document.removeEventListener('pointerdown', onMarkPickerOutside)
+  if (index !== null) document.addEventListener('pointerdown', onMarkPickerOutside)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('pointerdown', onMarkPickerOutside)
+})
+
 function markClass(color: MarkColor): string {
   return `mark-swatch mark-swatch-${color}`
+}
+
+function rowIndexMarkClass(index: number): string {
+  const sheetId = activeSheet.value?.id
+  if (!sheetId) return ''
+  const color = rowMarks.colorOf(sheetId, index)
+  return color ? `is-marked mark-index-${color}` : ''
 }
 
 function dataRowClass(viewIndex: number): Record<string, boolean> {
@@ -536,14 +548,6 @@ function dataRowClass(viewIndex: number): Record<string, boolean> {
   }
 }
 
-function jumpToNextMark() {
-  const sheetId = activeSheet.value?.id
-  if (!sheetId) return
-  const next = rowMarks.nextAfter(sheetId, selectedRowIndex.value ?? -1)
-  if (next === null) return
-  selectRowForEdit(next)
-}
-
 function cancelSearchTask() {
   if (!searchTaskId) return
   progressStore.remove(searchTaskId)
@@ -553,7 +557,7 @@ function cancelSearchTask() {
 let searchToken = 0
 watch(
   () =>
-    `${activeSheet.value?.id ?? ''}|${appConfigStore.searchQuery}|${appConfigStore.filterColumn}|${appConfigStore.advancedJoin}|${JSON.stringify(appConfigStore.advancedRules)}`,
+    `${activeSheet.value?.id ?? ''}|${appConfigStore.searchQuery}|${appConfigStore.filterColumn}|${appConfigStore.advancedJoin}|${JSON.stringify(appConfigStore.advancedRules)}|${onlyMarked.value ? 1 : 0}|${activeSheet.value ? rowMarks.count(activeSheet.value.id) : 0}`,
   async () => {
     const sheet = activeSheet.value
     const token = ++searchToken
@@ -586,6 +590,7 @@ watch(
         return false
       }
       if (
+        passesMarkFilter(index) &&
         rowMatchesFilters(
           row,
           sheet.headers,
@@ -1283,13 +1288,12 @@ function addNamedColumn() {
   <div ref="editorContainerRef" class="flex h-full w-full bg-base-100 overflow-hidden select-none relative">
     <!-- ── 1. FORM NHẬP LIỆU (KÉO CO DÃN ĐƯỢC ĐỘ RỘNG) ─────────────────────── -->
     <div
-      v-show="showForm && !showMarkList"
+      v-show="showForm"
       class="h-full min-w-0 border-r border-base-300"
       :class="showTableList && formWidth == null ? 'flex-1' : 'flex-shrink-0'"
       :style="!showTableList ? { width: '100%', maxWidth: '100%' } : formWidth == null ? undefined : { width: `${formWidth}px`, maxWidth: '50%' }"
     >
       <RowForm
-        v-if="!showMarkList"
         :headers="headers"
         :sheet-id="activeSheet?.id"
         :selected-row-index="selectedRowIndex"
@@ -1366,19 +1370,17 @@ function addNamedColumn() {
             </button>
           </div>
 
-          <div class="flex items-center gap-1">
-            <Filter class="w-3.5 h-3.5 opacity-50 flex-shrink-0" />
-            <select
-              v-model="filterCol"
-              class="select select-xs select-bordered text-xs"
-              @change="onSearchChange"
-            >
-              <option value="">{{ t('common.all.columns') }}</option>
-              <option v-for="h in headers" :key="h.key" :value="h.key">
-                {{ h.label }}
-              </option>
-            </select>
-          </div>
+          <select
+            v-model="filterCol"
+            class="select select-xs select-bordered text-xs max-w-[9rem]"
+            :title="t('common.all.columns')"
+            @change="onSearchChange"
+          >
+            <option value="">{{ t('common.all.columns') }}</option>
+            <option v-for="h in headers" :key="h.key" :value="h.key">
+              {{ h.label }}
+            </option>
+          </select>
 
           <button
             type="button"
@@ -1422,47 +1424,20 @@ function addNamedColumn() {
           <button type="button" class="btn btn-xs btn-ghost" :title="t('common.go.last.row')" @click="jumpToLastRow">
             {{ t('common.last') }}
           </button>
-          <div class="flex items-center gap-0.5" :title="t('table.mark.color')">
-            <button
-              v-for="item in MARK_COLORS"
-              :key="item.id"
-              type="button"
-              class="mark-swatch"
-              :class="[markClass(item.id), { 'is-selected': markColor === item.id }]"
-              :title="t(item.label)"
-              :aria-label="t('mark.color', { name: t(item.label) })"
-              @click="setCurrentMarkColor(item.id)"
-            />
-          </div>
-          <button
-            type="button"
-            class="btn btn-xs"
-            :class="currentMarked ? 'btn-warning' : 'btn-ghost'"
-            :title="t('table.mark.unmark.current.row')"
-            :disabled="selectedRowIndex === null"
-            @click="toggleCurrentMark"
-          >
-            {{ t('table.mark') }}
-          </button>
-          <button
-            type="button"
-            class="btn btn-xs btn-ghost"
-            :title="t('table.go.next.marked.row')"
-            :disabled="markCount === 0"
-            @click="jumpToNextMark"
-          >
-            {{ t('table.next.mark') }}<span v-if="markCount > 0"> ({{ markCount }})</span>
-          </button>
-          <button
-            type="button"
-            class="btn btn-xs btn-ghost"
-            :title="t('table.view.edit.marked.rows')"
-            :disabled="markCount === 0"
-            @click="openMarkList"
-          >
-            {{ t('table.list') }}
-          </button>
         </form>
+
+        <button
+          v-if="markCount > 0"
+          type="button"
+          class="btn btn-xs gap-1"
+          :class="onlyMarked ? 'btn-warning' : 'btn-ghost'"
+          :aria-pressed="onlyMarked"
+          @click="onlyMarked = !onlyMarked"
+        >
+          <Bookmark class="w-3.5 h-3.5" :class="{ 'fill-current': onlyMarked }" />
+          {{ t('table.filter.marked') }}
+          <span class="badge badge-xs">{{ markCount }}</span>
+        </button>
 
         <!-- Nút thu gọn / mở rộng bảng -->
         <button
@@ -1487,68 +1462,81 @@ function addNamedColumn() {
 
       <div
         v-if="showAdvancedFilter"
-        class="shrink-0 border-b border-base-300 bg-base-200/50 px-2 py-2 space-y-1.5"
+        class="shrink-0 border-b border-base-300 bg-base-200/60 px-3 py-2.5 space-y-2"
       >
-        <div class="flex flex-wrap items-center gap-1.5 text-xs">
-          <select v-model="draftJoin" class="select select-xs select-bordered">
-            <option value="and">{{ t('table.match.all') }}</option>
-            <option value="or">{{ t('table.match.any') }}</option>
-          </select>
-          <button type="button" class="btn btn-xs btn-ghost gap-1" @click="addFilterRule">
-            <Plus class="w-3.5 h-3.5" />
-            Thêm điều kiện
+        <div class="flex flex-wrap items-center gap-2 text-xs">
+          <div class="join">
+            <button
+              type="button"
+              class="btn btn-xs join-item"
+              :class="draftJoin === 'and' ? 'btn-primary' : 'btn-ghost'"
+              @click="draftJoin = 'and'"
+            >
+              {{ t('table.match.all') }}
+            </button>
+            <button
+              type="button"
+              class="btn btn-xs join-item"
+              :class="draftJoin === 'or' ? 'btn-primary' : 'btn-ghost'"
+              @click="draftJoin = 'or'"
+            >
+              {{ t('table.match.any') }}
+            </button>
+          </div>
+          <span class="opacity-60">{{ t('table.filter.count', { shown: listCount, total: rowTotal }) }}</span>
+          <button type="button" class="btn btn-xs btn-ghost ml-auto" @click="clearAdvancedFilter">
+            {{ t('table.clear.filters') }}
           </button>
-          <button type="button" class="btn btn-xs btn-primary" @click="applyAdvancedFilter">{{ t('common.apply') }}</button>
-          <button type="button" class="btn btn-xs btn-ghost" @click="clearAdvancedFilter">{{ t('table.clear.filters') }}</button>
         </div>
-        <div v-for="rule in draftRules" :key="rule.id" class="flex flex-wrap items-center gap-1">
+        <div v-for="rule in draftRules" :key="rule.id" class="flex flex-wrap items-center gap-1.5">
           <select
             v-model="rule.columnKey"
-            class="select select-xs select-bordered max-w-[140px]"
+            class="select select-sm select-bordered w-36 max-w-[40%]"
             @change="onFilterColumnChange(rule)"
           >
             <option v-for="header in headers" :key="header.key" :value="header.key">
               {{ header.label }}
             </option>
           </select>
-          <select v-model="rule.operator" class="select select-xs select-bordered">
+          <select v-model="rule.operator" class="select select-sm select-bordered w-36">
             <option
-              v-for="item in operatorsFor(headers.find((header) => header.key === rule.columnKey))"
+              v-for="item in operatorsFor(ruleHeader(rule))"
               :key="item.id"
               :value="item.id"
             >
-              {{ item.label }}
+              {{ t(item.label) }}
             </option>
           </select>
           <select
-            v-if="
-              operatorNeedsValue(rule.operator) &&
-              headers.find((header) => header.key === rule.columnKey)?.dataType === 'boolean'
-            "
+            v-if="operatorNeedsValue(rule.operator) && ruleHeader(rule)?.dataType === 'boolean'"
             v-model="rule.value"
-            class="select select-xs select-bordered"
+            class="select select-sm select-bordered flex-1 min-w-[8rem]"
           >
             <option value="true">{{ t('table.true') }}</option>
-            <option value="false">Sai</option>
+            <option value="false">{{ t('table.false') }}</option>
           </select>
           <input
             v-else-if="operatorNeedsValue(rule.operator)"
             v-model="rule.value"
             type="text"
-            class="input input-xs input-bordered w-40"
-            :placeholder="rule.operator === 'like' || rule.operator === 'not_like' ? '%abc hoặc NV___' : 'Giá trị'"
-            :title="rule.operator === 'like' || rule.operator === 'not_like' ? '% là nhiều ký tự, _ là một ký tự. Ví dụ: Nguyễn% hoặc NV___' : ''"
+            class="input input-sm input-bordered flex-1 min-w-[8rem]"
+            :placeholder="t('table.filter.text')"
             @keydown.enter.prevent="applyAdvancedFilter"
           />
           <button
             type="button"
-            class="btn btn-ghost btn-xs btn-square"
-            title="Bỏ điều kiện"
+            class="btn btn-ghost btn-sm btn-square"
+            :title="t('table.remove.rule')"
+            :aria-label="t('table.remove.rule')"
             @click="removeFilterRule(rule.id)"
           >
-            <Trash2 class="w-3.5 h-3.5" />
+            <Trash2 class="w-4 h-4" />
           </button>
         </div>
+        <button type="button" class="btn btn-xs btn-ghost gap-1" @click="addFilterRule">
+          <Plus class="w-3.5 h-3.5" />
+          {{ t('table.add.rule') }}
+        </button>
       </div>
 
       <!-- Bảng danh sách dòng -->
@@ -1557,13 +1545,16 @@ function addNamedColumn() {
           <thead>
             <tr>
               <th class="col-check border-r border-b border-base-300">
-                <div class="cell-center">
+                <div class="row-tools">
+                  <span class="row-tool-slot" aria-hidden="true" />
                   <input
                     type="checkbox"
                     class="checkbox checkbox-xs checkbox-primary"
                     :checked="headerAllSelected"
                     @change="toggleHeaderSelection"
                   />
+                  <span class="row-tool-slot" aria-hidden="true" />
+                  <span class="row-tool-slot" aria-hidden="true" />
                 </div>
               </th>
 
@@ -1614,7 +1605,7 @@ function addNamedColumn() {
             >
               <!-- Checkbox -->
               <td class="col-check border-r border-b border-base-300" @click.stop>
-                <div class="cell-center gap-0.5">
+                <div class="row-tools">
                   <button
                     type="button"
                     class="row-grip"
@@ -1632,15 +1623,37 @@ function addNamedColumn() {
                     :checked="selectionStore.isRowSelected(logicalAt(item.index))"
                     @change="selectionStore.toggleRowSelection(logicalAt(item.index))"
                   />
-                  <button
-                    type="button"
-                    class="row-index"
-                    :class="{ 'is-marked': !!activeSheet && rowMarks.isMarked(activeSheet.id, logicalAt(item.index)) }"
-                    :title="t('table.mark.row.selected.color')"
-                    @click.stop="toggleRowMark(logicalAt(item.index))"
-                  >
-                    {{ logicalAt(item.index) + 1 }}
-                  </button>
+                  <div class="row-mark-wrap">
+                    <button
+                      type="button"
+                      class="row-mark"
+                      :class="rowIndexMarkClass(logicalAt(item.index))"
+                      :aria-label="isRowMarked(logicalAt(item.index)) ? t('table.mark.remove') : t('table.mark')"
+                      :aria-expanded="colorPickerIndex === logicalAt(item.index)"
+                      :aria-pressed="isRowMarked(logicalAt(item.index))"
+                      :title="isRowMarked(logicalAt(item.index)) ? t('table.mark.remove') : t('table.mark.color')"
+                      @click="openMarkColors(logicalAt(item.index))"
+                    >
+                      <Bookmark class="w-3.5 h-3.5" />
+                    </button>
+                    <div
+                      v-if="colorPickerIndex === logicalAt(item.index)"
+                      class="mark-pop"
+                      @click.stop
+                    >
+                      <button
+                        v-for="color in MARK_COLORS"
+                        :key="color.id"
+                        type="button"
+                        class="mark-swatch"
+                        :class="[markClass(color.id), { 'is-selected': rowMarkColor(logicalAt(item.index)) === color.id }]"
+                        :title="t(color.label)"
+                        :aria-label="t('mark.color', { name: t(color.label) })"
+                        @click="pickRowColor(logicalAt(item.index), color.id)"
+                      />
+                    </div>
+                  </div>
+                  <span class="row-index">{{ logicalAt(item.index) + 1 }}</span>
                 </div>
               </td>
 
@@ -1787,101 +1800,6 @@ function addNamedColumn() {
       </div>
     </div>
 
-    <dialog v-if="showMarkList" class="modal modal-open" @keydown.esc.prevent="closeMarkList">
-      <div class="modal-box flex h-[min(820px,90vh)] w-[min(1080px,94vw)] max-w-none flex-col border border-base-300 p-0">
-        <div class="flex items-center justify-between gap-3 border-b border-base-300 px-4 py-3">
-          <div>
-            <h3 class="text-sm font-bold">{{ t('table.marked.rows') }}</h3>
-            <p class="text-xs opacity-60">{{ t('table.pick.row.edit.form.delete') }}</p>
-          </div>
-          <button type="button" class="btn btn-ghost btn-xs btn-square" title="Đóng" @click="closeMarkList">
-            <X class="w-4 h-4" />
-          </button>
-        </div>
-        <div class="flex min-h-0 flex-1">
-          <div class="flex w-72 flex-shrink-0 flex-col border-r border-base-300">
-            <p
-              v-if="!activeSheet || rowMarks.list(activeSheet.id).length === 0"
-              class="px-4 py-8 text-center text-sm opacity-60"
-            >
-              Chưa có dòng nào được đánh dấu.
-            </p>
-            <div v-else class="min-h-0 flex-1 overflow-auto">
-              <div
-                v-for="item in rowMarks.list(activeSheet.id)"
-                :key="item.index"
-                class="border-b border-base-300"
-                :class="selectedRowIndex === item.index ? 'bg-base-200' : ''"
-              >
-                <button
-                  type="button"
-                  class="flex w-full items-start gap-2 px-3 py-2 text-left"
-                  @click="selectRowForEdit(item.index)"
-                >
-                  <span class="mark-swatch mt-0.5 flex-shrink-0" :class="markClass(item.color)" />
-                  <span class="min-w-0">
-                    <span class="block font-mono text-xs font-bold">Dòng {{ item.index + 1 }}</span>
-                    <span class="block truncate text-[11px] opacity-60">{{ markPreviews[item.index] || '(trống)' }}</span>
-                  </span>
-                </button>
-                <div class="flex items-center justify-between gap-2 px-3 pb-2">
-                  <div class="flex items-center gap-1">
-                    <button
-                      v-for="color in MARK_COLORS"
-                      :key="color.id"
-                      type="button"
-                      class="mark-swatch"
-                      :class="[markClass(color.id), { 'is-selected': item.color === color.id }]"
-                      :title="t(color.label)"
-                      :aria-label="t('mark.switch', { name: t(color.label) })"
-                      @click="recolorMarkedRow(item.index, color.id)"
-                    />
-                  </div>
-                  <button type="button" class="btn btn-ghost btn-xs text-error" @click="removeMarkedRow(item.index)">
-                    Bỏ dấu
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="min-h-0 min-w-0 flex-1">
-            <RowForm
-              :headers="headers"
-              :sheet-id="activeSheet?.id"
-              :selected-row-index="selectedRowIndex"
-              :selected-row="selectedRow"
-              :data-revision="workbookStore.dataRevision"
-              :total-rows="rowTotal"
-              :table-hidden="!showTableList"
-              :preset-options="formPresets.presets.value"
-              :selected-preset-id="formPresets.selectedPresetId.value"
-              :shown-header-keys="shownHeaderKeys"
-              :preset-empty="formPresets.presetEmpty.value"
-              :row-is-new="
-                selectedRowIndex !== null &&
-                !!activeSheet &&
-                workbookStore.isFreshRow(activeSheet.id, selectedRowIndex)
-              "
-              @create="handleCreateRow"
-              @select-preset="formPresets.selectPreset"
-              @manage-presets="presetDialogOpen = true"
-              @commit="handleCommitFreshRow"
-              @edit-columns="showColumnEditor = true"
-              @update="handleUpdateRow"
-              @delete="handleDeleteRow"
-              @clear="handleClearForm"
-              @select-prev="handleSelectPrev"
-              @select-next="handleSelectNext"
-              @jump-to-row="selectRowForEdit"
-              @set-date-format="onHeaderSetDateFormat"
-              @hide="hideForm"
-              @show-table="showTableList = true"
-            />
-          </div>
-        </div>
-      </div>
-      <div class="modal-backdrop bg-black/40" @click="closeMarkList" />
-    </dialog>
     <FormPresetDialog
       :open="presetDialogOpen"
       :headers="manageableHeaders"
@@ -1892,5 +1810,6 @@ function addNamedColumn() {
       @update="onUpdatePreset"
       @remove="onRemovePreset"
     />
+    <ImageQuickLook />
   </div>
 </template>

@@ -7,45 +7,40 @@ export interface FilterOperatorOption {
 }
 
 const TEXT_OPERATORS: FilterOperatorOption[] = [
-  { id: 'contains', label: 'chứa' },
-  { id: 'not_contains', label: 'không chứa' },
-  { id: 'equals', label: 'bằng' },
-  { id: 'not_equals', label: 'khác' },
-  { id: 'starts', label: 'bắt đầu bằng' },
-  { id: 'ends', label: 'kết thúc bằng' },
-  { id: 'like', label: 'like' },
-  { id: 'not_like', label: 'not like' },
-  { id: 'empty', label: 'trống' },
-  { id: 'not_empty', label: 'có dữ liệu' },
+  { id: 'like', label: 'table.op.like' },
+  { id: 'not_like', label: 'table.op.not.like' },
+  { id: 'equals', label: 'table.op.equals' },
+  { id: 'starts', label: 'table.op.starts' },
+  { id: 'ends', label: 'table.op.ends' },
+  { id: 'empty', label: 'table.op.empty' },
+  { id: 'not_empty', label: 'table.op.filled' },
 ]
 
 const NUMBER_OPERATORS: FilterOperatorOption[] = [
-  { id: 'equals', label: '=' },
-  { id: 'not_equals', label: '≠' },
-  { id: 'gt', label: '>' },
-  { id: 'gte', label: '≥' },
-  { id: 'lt', label: '<' },
-  { id: 'lte', label: '≤' },
-  { id: 'like', label: 'like' },
-  { id: 'not_like', label: 'not like' },
-  { id: 'empty', label: 'trống' },
-  { id: 'not_empty', label: 'có dữ liệu' },
+  { id: 'like', label: 'table.op.like' },
+  { id: 'equals', label: 'table.op.eq' },
+  { id: 'not_equals', label: 'table.op.ne' },
+  { id: 'gt', label: 'table.op.gt' },
+  { id: 'gte', label: 'table.op.gte' },
+  { id: 'lt', label: 'table.op.lt' },
+  { id: 'lte', label: 'table.op.lte' },
+  { id: 'empty', label: 'table.op.empty' },
+  { id: 'not_empty', label: 'table.op.filled' },
 ]
 
 const DATE_OPERATORS: FilterOperatorOption[] = [
-  { id: 'equals', label: 'đúng ngày' },
-  { id: 'gt', label: 'sau ngày' },
-  { id: 'lt', label: 'trước ngày' },
-  { id: 'like', label: 'like' },
-  { id: 'not_like', label: 'not like' },
-  { id: 'empty', label: 'trống' },
-  { id: 'not_empty', label: 'có dữ liệu' },
+  { id: 'like', label: 'table.op.like' },
+  { id: 'equals', label: 'table.op.on.date' },
+  { id: 'gt', label: 'table.op.after.date' },
+  { id: 'lt', label: 'table.op.before.date' },
+  { id: 'empty', label: 'table.op.empty' },
+  { id: 'not_empty', label: 'table.op.filled' },
 ]
 
 const BOOLEAN_OPERATORS: FilterOperatorOption[] = [
-  { id: 'equals', label: 'là' },
-  { id: 'empty', label: 'trống' },
-  { id: 'not_empty', label: 'có dữ liệu' },
+  { id: 'equals', label: 'table.op.is' },
+  { id: 'empty', label: 'table.op.empty' },
+  { id: 'not_empty', label: 'table.op.filled' },
 ]
 
 export function operatorsFor(header: ColumnHeader | undefined): FilterOperatorOption[] {
@@ -71,13 +66,9 @@ function asNumber(value: CellValue): number | null {
 }
 
 function likeMatch(text: string, pattern: string): boolean {
-  const source = pattern
-    .trim()
-    .toLowerCase()
-    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    .replace(/%/g, '.*')
-    .replace(/_/g, '.')
-  return new RegExp(`^${source}$`, 'i').test(text.toLowerCase())
+  const needle = pattern.trim().toLowerCase()
+  if (!needle) return false
+  return text.toLowerCase().includes(needle)
 }
 
 function isEmpty(value: CellValue): boolean {

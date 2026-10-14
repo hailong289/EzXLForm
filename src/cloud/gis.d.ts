@@ -10,6 +10,17 @@ interface GoogleTokenClient {
   requestAccessToken: (override?: { prompt?: string }) => void
 }
 
+interface GoogleCodeResponse {
+  code?: string
+  scope?: string
+  error?: string
+  error_description?: string
+}
+
+interface GoogleCodeClient {
+  requestCode: () => void
+}
+
 interface GooglePickerDoc {
   id: string
   name?: string
@@ -48,7 +59,15 @@ interface Window {
           client_id: string
           scope: string
           callback: (response: GoogleTokenResponse) => void
+          error_callback?: (error: { type: string }) => void
         }) => GoogleTokenClient
+        initCodeClient: (config: {
+          client_id: string
+          scope: string
+          ux_mode?: 'popup' | 'redirect'
+          callback: (response: GoogleCodeResponse) => void
+          error_callback?: (error: { type: string }) => void
+        }) => GoogleCodeClient
         revoke: (token: string, done: () => void) => void
       }
     }
