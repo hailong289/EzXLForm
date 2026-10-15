@@ -5,7 +5,7 @@
  * Bao gồm: Logo, thao tác file (Mở/Xuất), chuyển View Mode,
  * nút Undo/Redo, tìm kiếm, và ThemeDropdown.
  */
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
   Upload,
   Download,
@@ -18,7 +18,9 @@ import {
   Trash2,
   Table2,
   Eye,
+  FileEdit,
   FileSpreadsheet,
+  Menu,
   ChevronDown,
   Files,
   CircleHelp,
@@ -37,6 +39,7 @@ import ThemeDropdown from '@/components/common/ThemeDropdown.vue'
 import LanguageDropdown from '@/components/common/LanguageDropdown.vue'
 import HelpGuide from '@/components/modals/HelpGuide.vue'
 import { useLocale } from '@/composables/useLocale'
+import { menuWidthPx } from '@/utils/workspaceFrame'
 
 // ─── Emits ──────────────────────────────────────────────────────────────────
 const emit = defineEmits<{
@@ -79,7 +82,19 @@ const cloudBinding = computed(() => bindingFor(activeSessionId.value))
 /** Hidden file input element */
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const showHelp = ref(false)
+const mobileOpen = ref(false)
 const { t, locale } = useLocale()
+const viewportWidth = ref(window.innerWidth)
+const menuWidth = computed(() => `${menuWidthPx(viewportWidth.value, 320)}px`)
+
+function onViewportResize() {
+  viewportWidth.value = window.innerWidth
+  if (viewportWidth.value >= 1024) mobileOpen.value = false
+  if (viewportWidth.value < 768) appConfigStore.setViewMode('editor')
+}
+
+onMounted(() => window.addEventListener('resize', onViewportResize))
+onUnmounted(() => window.removeEventListener('resize', onViewportResize))
 
 // ─── View Mode Options ───────────────────────────────────────────────────────
 interface ViewModeOption {
@@ -107,6 +122,7 @@ function formatSessionTime(ts: number): string {
 
 function closeMenus() {
   ;(document.activeElement as HTMLElement | null)?.blur()
+  mobileOpen.value = false
 }
 
 // ─── Handlers ────────────────────────────────────────────────────────────────
@@ -129,7 +145,191 @@ function onFileSelected(event: Event) {
 </script>
 
 <template>
-  <nav class="navbar bg-base-200 border-b border-base-300 px-4 min-h-12 h-12 flex items-center gap-2">
+  <nav class="border-b border-base-300 bg-base-200">
+    <div class="flex h-12 items-center gap-2 px-2 lg:hidden">
+      <button
+        type="button"
+        class="btn btn-ghost btn-sm h-9 min-h-9 shrink-0 px-2"
+        :title="t('nav.home')"
+        @click="emit('go-home'); mobileOpen = false"
+      >
+        <FileSpreadsheet class="h-4 w-4 text-primary" />
+      </button>
+      <div
+        v-if="workbookStore.workbook && viewportWidth < 768"
+        class="flex h-9 min-w-0 flex-1 rounded-full bg-base-300/80 p-0.5"
+        role="tablist"
+      >
+        <button
+          type="button"
+          role="tab"
+          class="flex h-8 flex-1 items-center justify-center gap-1 rounded-full text-xs font-medium motion-safe:active:scale-[0.98]"
+          :class="appConfigStore.phoneScreen === 'table' ? 'bg-primary text-primary-content' : 'text-base-content/70'"
+          :aria-selected="appConfigStore.phoneScreen === 'table'"
+          @click="appConfigStore.setPhoneScreen('table')"
+        >
+          <Table2 class="h-3.5 w-3.5" /> {{ t('nav.screen.table') }}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class="flex h-8 flex-1 items-center justify-center gap-1 rounded-full text-xs font-medium motion-safe:active:scale-[0.98]"
+          :class="appConfigStore.phoneScreen === 'form' ? 'bg-primary text-primary-content' : 'text-base-content/70'"
+          :aria-selected="appConfigStore.phoneScreen === 'form'"
+          @click="appConfigStore.setPhoneScreen('form')"
+        >
+          <FileEdit class="h-3.5 w-3.5" /> {{ t('nav.screen.form') }}
+        </button>
+      </div>
+      <span
+        v-else-if="workbookStore.workbook"
+        class="min-w-0 flex-1 truncate text-xs opacity-70"
+        :title="workbookStore.workbook.meta.fileName"
+      >
+        <span v-if="workbookStore.isDirty" class="mr-1 font-bold text-error">*</span>
+        {{ workbookStore.workbook.meta.fileName }}
+      </span>
+      <span v-else class="flex-1" />
+      <div v-if="!(workbookStore.workbook && viewportWidth < 768)" class="join shrink-0">
+        <button
+          type="button"
+          class="btn join-item btn-sm h-11 min-h-11 px-3"
+          :class="appConfigStore.viewMode === 'editor' ? 'btn-primary' : 'btn-ghost'"
+          :aria-label="t('nav.edit')"
+          @click="appConfigStore.setViewMode('editor')"
+        >
+          <Table2 class="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          class="btn join-item btn-sm h-11 min-h-11 px-3"
+          :class="appConfigStore.viewMode === 'preview' ? 'btn-primary' : 'btn-ghost'"
+          :aria-label="t('nav.excel.preview')"
+          @click="appConfigStore.setViewMode('preview')"
+        >
+          <Eye class="h-4 w-4" />
+        </button>
+      </div>
+      <button
+        type="button"
+        class="btn btn-ghost btn-sm h-9 min-h-9 shrink-0 px-2"
+        :aria-expanded="mobileOpen"
+        :aria-label="t('nav.menu')"
+        @click="mobileOpen = !mobileOpen"
+      >
+        <X v-if="mobileOpen" class="h-5 w-5" />
+        <Menu v-else class="h-5 w-5" />
+      </button>
+    </div>
+
+    <div
+      v-if="mobileOpen"
+      class="fixed inset-0 z-[80] flex flex-col bg-base-100 lg:hidden"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="t('nav.menu')"
+    >
+      <div class="flex h-14 shrink-0 items-center justify-between border-b border-base-300 px-4">
+        <span class="text-sm font-semibold">{{ t('nav.menu') }}</span>
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm h-11 min-h-11 px-3"
+          :aria-label="t('common.close')"
+          @click="mobileOpen = false"
+        >
+          <X class="h-5 w-5" />
+        </button>
+      </div>
+
+      <div class="flex-1 overflow-y-auto px-4 py-4">
+        <p class="mb-2 text-xs font-medium text-base-content/55">{{ t('nav.open') }}</p>
+        <div class="overflow-hidden rounded-xl border border-base-300">
+          <button type="button" class="flex h-12 w-full items-center gap-3 px-3 text-left text-sm hover:bg-base-200" @click="openFilePicker(); closeMenus()">
+            <HardDrive class="h-4 w-4 shrink-0 opacity-70" /> {{ t('nav.computer') }}
+          </button>
+          <button v-if="googleConfigured()" type="button" class="flex h-12 w-full items-center gap-3 border-t border-base-300 px-3 text-left text-sm hover:bg-base-200" @click="emit('open-cloud', 'google'); closeMenus()">
+            <Cloud class="h-4 w-4 shrink-0 opacity-70" /> Google Drive
+          </button>
+          <button v-if="microsoftConfigured()" type="button" class="flex h-12 w-full items-center gap-3 border-t border-base-300 px-3 text-left text-sm hover:bg-base-200" @click="emit('open-cloud', 'microsoft'); closeMenus()">
+            <FileSpreadsheet class="h-4 w-4 shrink-0 opacity-70" /> OneDrive
+          </button>
+        </div>
+
+        <p class="mb-2 mt-5 text-xs font-medium text-base-content/55">{{ t('nav.export') }}</p>
+        <div class="grid grid-cols-3 gap-2">
+          <button type="button" class="btn btn-outline h-12 min-h-12 text-xs" :disabled="!workbookStore.workbook" @click="emit('export-xlsx'); closeMenus()">
+            <Download class="h-3.5 w-3.5" /> .xlsx
+          </button>
+          <button type="button" class="btn btn-outline h-12 min-h-12 text-xs" :disabled="!workbookStore.workbook" @click="emit('export-csv'); closeMenus()">
+            <Download class="h-3.5 w-3.5" /> .csv
+          </button>
+          <button type="button" class="btn btn-outline h-12 min-h-12 text-xs" :disabled="!workbookStore.workbook" @click="emit('export-sqlite'); closeMenus()">
+            <Download class="h-3.5 w-3.5" /> .sqlite
+          </button>
+        </div>
+
+        <p class="mb-2 mt-5 text-xs font-medium text-base-content/55">{{ t('nav.sessions') }}</p>
+        <p v-if="sessions.length === 0" class="rounded-xl border border-dashed border-base-300 px-3 py-4 text-xs opacity-60">
+          {{ t('nav.no.sessions.yet.open.file') }}
+        </p>
+        <div v-else class="overflow-hidden rounded-xl border border-base-300">
+          <div v-for="(session, index) in sessions" :key="session.id" class="flex items-center" :class="index > 0 ? 'border-t border-base-300' : ''">
+            <button
+              type="button"
+              class="flex h-12 min-w-0 flex-1 items-center px-3 text-left text-sm hover:bg-base-200"
+              @click="emit('switch-session', session.id); closeMenus()"
+            >
+              <span class="truncate">{{ session.fileName }}</span>
+            </button>
+            <button
+              type="button"
+              class="btn btn-ghost h-12 min-h-12 px-3"
+              :aria-label="t('nav.close.session')"
+              @click="emit('delete-session', session.id)"
+            >
+              <X class="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        <div class="mt-5 grid grid-cols-2 gap-2">
+          <button type="button" class="btn btn-ghost h-12 min-h-12 justify-start gap-2 border border-base-300 px-3" :disabled="!canUndo" @click="emit('undo'); closeMenus()">
+            <Undo2 class="h-4 w-4 shrink-0" />
+            <span class="truncate">{{ canUndo ? t('nav.undo.desc', { desc: undoDescription }) : t('nav.nothing.undo') }}</span>
+          </button>
+          <button type="button" class="btn btn-ghost h-12 min-h-12 justify-start gap-2 border border-base-300 px-3" :disabled="!canRedo" @click="emit('redo'); closeMenus()">
+            <Redo2 class="h-4 w-4 shrink-0" />
+            <span class="truncate">{{ canRedo ? t('nav.redo.desc', { desc: redoDescription }) : t('nav.nothing.redo') }}</span>
+          </button>
+        </div>
+        <button type="button" class="btn btn-ghost mt-2 h-12 min-h-12 w-full justify-start gap-2 border border-base-300" @click="emit('toggle-find-replace'); closeMenus()">
+          <Search class="h-4 w-4" /> {{ t('nav.find.replace.ctrl.h') }}
+        </button>
+        <button
+          v-if="cloudBinding"
+          type="button"
+          class="btn btn-ghost mt-2 h-12 min-h-12 w-full justify-start gap-2 border border-base-300"
+          :disabled="cloudSyncing"
+          @click="emit('save-cloud'); closeMenus()"
+        >
+          <Cloud class="h-4 w-4" /> {{ t('nav.sync') }}
+        </button>
+        <button type="button" class="btn btn-ghost mt-2 h-12 min-h-12 w-full justify-start gap-2 border border-base-300" @click="progressStore.openManager(); closeMenus()">
+          <List class="h-4 w-4" /> {{ t('nav.tasks') }}
+          <span v-if="progressStore.tasks.length" class="badge badge-sm badge-primary">{{ progressStore.tasks.length }}</span>
+        </button>
+        <button type="button" class="btn btn-ghost mt-2 h-12 min-h-12 w-full justify-start gap-2 border border-base-300" @click="showHelp = true; closeMenus()">
+          <CircleHelp class="h-4 w-4" /> {{ t('nav.help.f1') }}
+        </button>
+
+        <div class="mt-5 flex items-center gap-2 border-t border-base-300 pt-4">
+          <LanguageDropdown />
+          <ThemeDropdown />
+        </div>
+      </div>
+    </div>
+
+    <div class="navbar hidden h-12 min-h-12 items-center gap-2 overflow-x-auto px-4 lg:flex lg:overflow-x-visible">
 
     <!-- ── Left: Logo & File Actions ─────────────────────────────────────── -->
     <div class="flex items-center gap-2 flex-none">
@@ -194,7 +394,8 @@ function onFileSelected(event: Event) {
 
         <div
           tabindex="0"
-          class="dropdown-content z-50 mt-1 w-80 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
+          class="dropdown-content z-50 mt-1 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
+          :style="{ width: menuWidth }"
         >
           <div class="mb-1 flex items-center justify-between px-1">
             <span class="text-xs font-semibold">{{ t('nav.open.sessions') }}</span>
@@ -305,7 +506,7 @@ function onFileSelected(event: Event) {
         >*</span>
 
         <span
-          class="text-sm opacity-70 max-w-[140px] truncate"
+          class="hidden text-sm opacity-70 max-w-[140px] truncate md:inline"
           :title="workbookStore.workbook.meta.fileName"
         >
           {{ workbookStore.workbook.meta.fileName }}
@@ -329,7 +530,7 @@ function onFileSelected(event: Event) {
     </div>
 
     <!-- ── Center: View Mode (Editor vs Preview) ───────────────────────── -->
-    <div class="flex-1 flex justify-center">
+    <div class="flex flex-1 justify-center max-lg:flex-none">
       <div class="join bg-base-300/40 p-0.5 rounded-lg border border-base-300">
         <!-- Editor View -->
         <button
@@ -339,7 +540,7 @@ function onFileSelected(event: Event) {
           @click="appConfigStore.setViewMode('editor')"
         >
           <Table2 class="w-3.5 h-3.5" />
-          <span>{{ t('nav.edit') }}</span>
+          <span class="hidden md:inline">{{ t('nav.edit') }}</span>
         </button>
 
         <!-- Preview View -->
@@ -350,7 +551,7 @@ function onFileSelected(event: Event) {
           @click="appConfigStore.setViewMode('preview')"
         >
           <Eye class="w-3.5 h-3.5" />
-          <span>{{ t('nav.excel.preview') }}</span>
+          <span class="hidden md:inline">{{ t('nav.excel.preview') }}</span>
         </button>
       </div>
     </div>
@@ -417,7 +618,8 @@ function onFileSelected(event: Event) {
         </button>
         <div
           tabindex="0"
-          class="dropdown-content z-50 mt-1 w-80 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
+          class="dropdown-content z-50 mt-1 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
+          :style="{ width: menuWidth }"
         >
           <div class="mb-1 flex items-center justify-between px-1">
             <span class="text-xs font-semibold">{{ t('nav.tasks') }}</span>
@@ -497,6 +699,7 @@ function onFileSelected(event: Event) {
       <!-- Tách thành component riêng để dễ mở rộng -->
       <LanguageDropdown />
       <ThemeDropdown />
+    </div>
     </div>
   </nav>
   <HelpGuide v-model="showHelp" />

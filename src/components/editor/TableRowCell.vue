@@ -4,7 +4,7 @@ import type { CellValue, ColumnHeader } from '@/types/excel'
 import { useImageQuickLook } from '@/composables/imageQuickLook'
 import { useLocale } from '@/composables/useLocale'
 import { DEFAULT_DATE_FORMAT, formatDateValue, parseDateToIso } from '@/utils/dateFormat'
-import { imageLabel, imageSource } from '@/utils/imageSource'
+import { imageLabel, imageSources } from '@/utils/imageSource'
 
 const props = defineProps<{
   value: CellValue
@@ -23,18 +23,21 @@ const emit = defineEmits<{
 
 const localVal = ref<string>('')
 const inputRef = ref<HTMLInputElement | null>(null)
-const thumbFailed = ref(false)
+const failedThumbs = ref<Set<string>>(new Set())
 const { t } = useLocale()
 const quickLook = useImageQuickLook()
-const preview = computed(() => imageSource(props.value))
+const previews = computed(() => imageSources(props.value))
 
-watch(preview, () => {
-  thumbFailed.value = false
+watch(previews, () => {
+  failedThumbs.value = new Set()
 })
 
-function openPreview() {
-  if (!preview.value) return
-  quickLook.open(preview.value, imageLabel(preview.value))
+function openPreview(source: string) {
+  quickLook.open(source, imageLabel(source))
+}
+
+function markThumbFailed(source: string) {
+  failedThumbs.value = new Set(failedThumbs.value).add(source)
 }
 
 watch(
@@ -133,6 +136,26 @@ function formatDisplay(val: CellValue): string {
       />
     </div>
 
+    <div
+      v-else-if="previews.length"
+      class="flex h-full w-full items-center gap-1 overflow-x-auto overscroll-x-contain px-1"
+      :title="props.value != null && props.value !== '' ? String(props.value) : ''"
+    >
+      <button
+        v-for="(source, imageIndex) in previews"
+        v-show="!failedThumbs.has(source)"
+        :key="`${imageIndex}-${source}`"
+        type="button"
+        class="h-6 w-6 shrink-0 overflow-hidden rounded border border-base-300 bg-base-200"
+        :aria-label="t('image.quicklook')"
+        :title="t('image.quicklook')"
+        @click.stop="openPreview(source)"
+        @dblclick.stop
+      >
+        <img :src="source" alt="" class="h-full w-full object-cover" @error="markThumbFailed(source)" />
+      </button>
+    </div>
+
     <!-- Display Value -->
     <div
       v-else
@@ -143,17 +166,6 @@ function formatDisplay(val: CellValue): string {
       }"
       :title="props.value != null && props.value !== '' ? String(props.value) : 'Bấm đúp để sửa trong ô'"
     >
-      <button
-        v-if="preview && !thumbFailed"
-        type="button"
-        class="mr-1.5 h-5 w-5 shrink-0 overflow-hidden rounded border border-base-300 bg-base-200"
-        :aria-label="t('image.quicklook')"
-        :title="t('image.quicklook')"
-        @click.stop="openPreview"
-        @dblclick.stop
-      >
-        <img :src="preview" alt="" class="h-full w-full object-cover" @error="thumbFailed = true" />
-      </button>
       <span class="truncate">{{ formatDisplay(props.value) }}</span>
     </div>
   </td>

@@ -24,6 +24,7 @@ import {
   Search,
   X,
   Maximize2,
+  Ellipsis,
 } from 'lucide-vue-next'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import type { ColumnHeader, RowData } from '@/types/excel'
@@ -31,18 +32,16 @@ import { DATE_FORMATS, DEFAULT_DATE_FORMAT, formatDateValue, parseDateToIso } fr
 import { coerceCellValue, coerceRowData } from '@/utils/cellValue'
 import { useImageQuickLook } from '@/composables/imageQuickLook'
 import { useLocale } from '@/composables/useLocale'
-import { imageLabel, imageSource } from '@/utils/imageSource'
+import { imageLabel, imageSources } from '@/utils/imageSource'
 
 const { t } = useLocale()
 const quickLook = useImageQuickLook()
 
-function fieldImage(key: string): string | null {
-  return imageSource(formData.value[key])
+function fieldImages(key: string): string[] {
+  return imageSources(formData.value[key])
 }
 
-function openFieldImage(key: string) {
-  const source = fieldImage(key)
-  if (!source) return
+function openFieldImage(source: string) {
   quickLook.open(source, imageLabel(source))
 }
 
@@ -54,6 +53,7 @@ const props = defineProps<{
   totalRows: number
   sheetId?: string
   tableHidden?: boolean
+  phone?: boolean
   rowIsNew?: boolean
   presetOptions: { id: string; name: string }[]
   selectedPresetId: string
@@ -477,6 +477,10 @@ function widthFor(count: number): number {
   return count * MIN_FIELD_PX + (count - 1) * GRID_GAP_PX
 }
 
+function closeFormMenu() {
+  ;(document.activeElement as HTMLElement | null)?.blur()
+}
+
 function optimalColumns(width: number): number {
   if (width >= widthFor(4)) return 4
   if (width >= widthFor(2)) return 2
@@ -484,6 +488,12 @@ function optimalColumns(width: number): number {
 }
 
 const columnCount = computed(() => optimalColumns(gridWidth.value))
+
+const compactImages = computed(() => {
+  const cols = Math.max(1, columnCount.value)
+  const field = (gridWidth.value - GRID_GAP_PX * (cols - 1)) / cols
+  return field < 240
+})
 
 const FIELD_MIN_PX = 32
 const FIELD_MAX_PX = 220
@@ -581,42 +591,43 @@ onUnmounted(() => {
 
 <template>
   <div
-    class="flex flex-col h-full bg-base-100 select-none overflow-hidden"
+    class="flex h-full select-none flex-col overflow-hidden bg-base-100"
     @keydown="onFormKeydown"
     @focusin="formFocused = true"
     @focusout="onFormFocusOut"
   >
     <!-- ── Header Panel Gọn Gàng ───────────────────────────────────────────── -->
-    <div class="p-3 bg-base-200/90 border-b border-base-300 flex items-center justify-between gap-3">
-      <!-- Title & Mode Badge -->
-      <div class="flex items-center gap-2.5">
+    <div
+      class="flex items-center border-b border-base-300 bg-base-200/90"
+      :class="props.phone ? 'gap-2 px-2 py-1.5' : 'flex-wrap justify-between gap-3 p-3'"
+    >
+      <div class="flex min-w-0 flex-1 items-center gap-2">
         <div
-          class="p-2 rounded-lg flex-shrink-0"
-          :class="isEditMode ? 'bg-info/15 text-info' : 'bg-primary/15 text-primary'"
+          class="flex-shrink-0 rounded-lg"
+          :class="[isEditMode ? 'bg-info/15 text-info' : 'bg-primary/15 text-primary', props.phone ? 'p-1.5' : 'p-2']"
         >
-          <FileEdit v-if="isEditMode" class="w-4 h-4" />
-          <FilePlus v-else class="w-4 h-4" />
+          <FileEdit v-if="isEditMode" class="h-4 w-4" />
+          <FilePlus v-else class="h-4 w-4" />
         </div>
-        <div>
+        <div class="min-w-0">
           <div class="flex items-center gap-2">
-            <h3 class="font-bold text-sm leading-none">
+            <h3 class="truncate text-sm font-bold leading-none">
               {{ !hasRows ? t('form.no.rows') : isEditMode ? t('form.row.n', { n: (props.selectedRowIndex ?? 0) + 1 }) : t('form.new.row') }}
             </h3>
-
             <span
               v-if="isEditMode && syncUi !== 'idle'"
               class="inline-flex items-center justify-center rounded-md p-1"
               :class="syncUi === 'done' ? 'bg-success/15 text-success' : 'bg-info/15 text-info'"
               :title="syncUi === 'done' ? t('form.saved') : t('form.saving')"
             >
-              <CheckCircle2 v-if="syncUi === 'done'" class="w-3.5 h-3.5" />
-              <RefreshCw v-else class="w-3.5 h-3.5 animate-spin" />
+              <CheckCircle2 v-if="syncUi === 'done'" class="h-3.5 w-3.5" />
+              <RefreshCw v-else class="h-3.5 w-3.5 animate-spin" />
             </span>
-            <span v-else-if="hasRows" class="badge badge-xs badge-primary font-semibold py-0.5 px-2">
+            <span v-else-if="hasRows && !props.phone" class="badge badge-xs badge-primary px-2 py-0.5 font-semibold">
               {{ t('form.new.mode') }}
             </span>
           </div>
-          <span class="text-[11px] opacity-60 mt-0.5 block">
+          <span v-if="!props.phone" class="mt-0.5 block text-[11px] opacity-60">
             {{
               !hasRows
                 ? t('form.click.add.row.start.entering')
@@ -629,48 +640,106 @@ onUnmounted(() => {
       </div>
 
       <!-- Quick Reset / New Row Button -->
-      <div class="flex items-center gap-1.5 flex-shrink-0">
-        <button type="button" class="btn btn-xs btn-outline" @click="emit('manage-presets')">
-          {{ t('common.form.types') }}
-        </button>
+      <div class="flex max-w-full flex-wrap items-center gap-1.5">
         <button
-          class="btn btn-xs btn-outline gap-1"
-          :title="t('form.hide.form')"
-          :disabled="props.tableHidden"
-          @click="emit('hide')"
-        >
-          <PanelLeftClose class="w-3.5 h-3.5" /> {{ t('form.hide.form') }}
-        </button>
-        <button
-          v-if="props.tableHidden"
+          v-if="props.tableHidden && !props.phone"
           class="btn btn-xs btn-outline btn-primary gap-1"
           :title="t('form.show.table')"
           @click="emit('show-table')"
         >
           <PanelRightOpen class="w-3.5 h-3.5" /> {{ t('form.show.table') }}
         </button>
-        <button
-          class="btn btn-xs btn-outline gap-1"
-          :title="t('form.add.rename.header.columns')"
-          @click="emit('edit-columns')"
-        >
-          <Columns3 class="w-3.5 h-3.5" /> {{ t('form.columns') }}
-        </button>
-        <button
-          v-if="isEditMode"
-          class="btn btn-xs btn-outline btn-primary gap-1"
-          :title="t('form.switch.new.row.entry')"
-          @click="handleNewRowMode"
-        >
-          <Plus class="w-3.5 h-3.5" /> {{ t('form.create.row') }}
-        </button>
+        <div class="dropdown dropdown-end">
+          <button type="button" tabindex="0" class="btn btn-xs btn-outline gap-1" :title="t('form.actions')" :aria-label="t('form.actions')">
+            <Ellipsis class="h-3.5 w-3.5" />
+            <span v-if="!props.phone">{{ t('form.actions') }}</span>
+          </button>
+          <ul tabindex="0" class="dropdown-content menu z-50 mt-1 w-52 rounded-box border border-base-300 bg-base-100 p-1 shadow-lg">
+            <li>
+              <button type="button" class="text-xs" @click="emit('manage-presets'); closeFormMenu()">
+                {{ t('common.form.types') }}
+              </button>
+            </li>
+            <li v-if="!props.tableHidden">
+              <button type="button" class="text-xs" @click="emit('hide'); closeFormMenu()">
+                <PanelLeftClose class="h-3.5 w-3.5" /> {{ t('form.hide.form') }}
+              </button>
+            </li>
+            <li>
+              <button type="button" class="text-xs" @click="emit('edit-columns'); closeFormMenu()">
+                <Columns3 class="h-3.5 w-3.5" /> {{ t('form.columns') }}
+              </button>
+            </li>
+            <li v-if="isEditMode">
+              <button type="button" class="text-xs" :disabled="!props.selectedRow" @click="handleCreate('after', 'copy'); closeFormMenu()">
+                <Copy class="h-3.5 w-3.5" /> {{ t('form.copy.below') }}
+              </button>
+            </li>
+            <li v-if="hasRows">
+              <button type="button" class="text-xs" @click="handleCreate('end', 'blank'); closeFormMenu()">
+                <Plus class="h-3.5 w-3.5" /> {{ t('form.add.end') }}
+              </button>
+            </li>
+            <li v-if="isEditMode">
+              <button type="button" class="text-xs text-error" @click="handleDeleteClick(); closeFormMenu()">
+                <Trash2 class="h-3.5 w-3.5" /> {{ t('form.delete.row') }}
+              </button>
+            </li>
+            <li v-if="hasRows">
+              <button type="button" class="text-xs" @click="handleNewRowMode(); closeFormMenu()">
+                <RotateCcw class="h-3.5 w-3.5" /> {{ t('form.clear') }}
+              </button>
+            </li>
+          </ul>
+        </div>
       </div>
     </div>
 
     <!-- ── Thanh Điều Hướng Dòng & Nhảy Dòng ───────────────────────────────── -->
     <div
-      v-if="props.totalRows > 0"
-      class="px-3 py-1.5 bg-base-200/50 border-b border-base-300 flex items-center justify-between gap-2 text-xs"
+      v-if="props.totalRows > 0 && props.phone"
+      class="flex items-center gap-1 border-b border-base-300 px-2 py-1 text-xs"
+    >
+      <button
+        type="button"
+        class="btn btn-ghost btn-xs h-7 min-h-7 px-1.5"
+        :disabled="props.selectedRowIndex === null || props.selectedRowIndex <= 0"
+        :aria-label="t('form.previous')"
+        @click="emit('select-prev')"
+      >
+        <ChevronLeft class="h-4 w-4" />
+      </button>
+      <input
+        v-model.number="jumpInput"
+        type="number"
+        min="1"
+        :max="props.totalRows"
+        class="input input-xs input-bordered h-7 w-12 text-center text-xs font-bold"
+        :aria-label="t('form.viewing')"
+        @keydown.enter="onJumpSubmit"
+      />
+      <span class="opacity-50">/ {{ props.totalRows }}</span>
+      <button
+        type="button"
+        class="btn btn-ghost btn-xs h-7 min-h-7 px-2 text-[11px]"
+        :title="t('common.go.last.row')"
+        @click="jumpToLastRow"
+      >
+        {{ t('common.last') }}
+      </button>
+      <button
+        type="button"
+        class="btn btn-ghost btn-xs ml-auto h-7 min-h-7 px-1.5"
+        :disabled="props.selectedRowIndex === null || props.selectedRowIndex >= props.totalRows - 1"
+        :aria-label="t('form.next')"
+        @click="emit('select-next')"
+      >
+        <ChevronRight class="h-4 w-4" />
+      </button>
+    </div>
+    <div
+      v-else-if="props.totalRows > 0"
+      class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 bg-base-200/50 px-3 py-1.5 text-xs"
     >
       <!-- Jump to row input -->
       <div class="flex items-center gap-1.5">
@@ -680,7 +749,7 @@ onUnmounted(() => {
           type="number"
           min="1"
           :max="props.totalRows"
-          class="input input-xs input-bordered w-24 text-center font-bold text-xs h-6 px-1"
+          class="input input-xs input-bordered w-16 text-center font-bold text-xs h-6 px-1 sm:w-24"
           :placeholder="t('form.row.number')"
           :title="t('common.type.row.number.press.enter')"
           @keydown.enter="onJumpSubmit"
@@ -750,7 +819,7 @@ onUnmounted(() => {
     </div>
 
     <!-- ── Form Inputs (Bố cục Lưới Gọn Gàng & Rộng Rãi) ────────────────────── -->
-    <div v-else ref="gridHostRef" class="flex-1 overflow-y-auto p-4 scrollbar-thin">
+    <div v-else ref="gridHostRef" class="scrollbar-thin flex-1 overflow-y-auto p-4">
       <div v-if="formHeaders.length > 8" class="mb-3">
         <label class="input input-bordered input-sm flex items-center gap-2 w-full">
           <Search class="w-3.5 h-3.5 opacity-50" />
@@ -789,22 +858,22 @@ onUnmounted(() => {
       <div
         v-else
         data-field-grid
-        class="grid w-full min-w-0 gap-3 items-stretch"
+        class="grid w-full min-w-0 items-stretch gap-3"
         :style="{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }"
       >
         <div
           v-for="(h, index) in filteredHeaders"
           :key="h.key"
           data-field-card
-          class="min-w-0 max-w-full overflow-hidden bg-base-100 hover:bg-base-200/40 transition-colors p-3 rounded-xl border border-base-300 shadow-sm flex flex-col"
+          class="flex min-w-0 max-w-full flex-col overflow-hidden rounded-xl border border-base-300 bg-base-100 p-3 shadow-sm hover:bg-base-200/40"
           :class="{ 'border-error/60': !!visibleFieldError(h.key) }"
         >
           <div class="mb-1 flex min-w-0 shrink-0 items-center justify-between gap-2">
-            <label :for="`field-${index}`" class="text-xs font-bold text-base-content/90 leading-tight flex items-center gap-1.5 min-w-0" :title="h.label">
-              <Type v-if="h.dataType === 'text' || !h.dataType" class="w-3.5 h-3.5 text-primary opacity-70 flex-shrink-0" />
-              <Hash v-else-if="h.dataType === 'number'" class="w-3.5 h-3.5 text-info opacity-70 flex-shrink-0" />
-              <Calendar v-else-if="h.dataType === 'date'" class="w-3.5 h-3.5 text-warning opacity-70 flex-shrink-0" />
-              <CheckSquare v-else class="w-3.5 h-3.5 text-success opacity-70 flex-shrink-0" />
+            <label :for="`field-${index}`" class="flex min-w-0 items-center gap-1.5 text-xs font-bold leading-tight text-base-content/90" :title="h.label">
+              <Type v-if="h.dataType === 'text' || !h.dataType" class="h-3.5 w-3.5 flex-shrink-0 text-primary opacity-70" />
+              <Hash v-else-if="h.dataType === 'number'" class="h-3.5 w-3.5 flex-shrink-0 text-info opacity-70" />
+              <Calendar v-else-if="h.dataType === 'date'" class="h-3.5 w-3.5 flex-shrink-0 text-warning opacity-70" />
+              <CheckSquare v-else class="h-3.5 w-3.5 flex-shrink-0 text-success opacity-70" />
               <span class="truncate min-w-0">{{ h.label }}</span>
               <span
                 v-if="formData[h.key] !== originalData[h.key]"
@@ -821,8 +890,8 @@ onUnmounted(() => {
                 {{ h.dataType || 'text' }}
               </span>
               <select
-                v-else
-                class="select select-xs select-bordered h-6 min-h-0 w-[6.5rem] text-[10px] font-mono"
+                v-else-if="h.dataType === 'date'"
+                class="select select-xs select-bordered h-6 min-h-0 w-[6.5rem] font-mono text-[10px]"
                 :value="datePattern(h)"
                 :title="t('form.date.format')"
                 @change="emit('set-date-format', h.key, ($event.target as HTMLSelectElement).value)"
@@ -845,28 +914,32 @@ onUnmounted(() => {
 
           <div class="field-body mt-1.5 min-h-0 min-w-0 flex-1">
             <div
-              v-if="(h.dataType === 'text' || !h.dataType) && fieldImage(h.key)"
+              v-if="(h.dataType === 'text' || !h.dataType) && fieldImages(h.key).length"
               class="flex w-full min-w-0 flex-col gap-1.5"
             >
-              <button
-                type="button"
-                class="flex h-24 w-full items-center justify-center overflow-hidden rounded-lg border border-base-300 bg-base-200/60"
-                :aria-label="t('image.quicklook')"
-                @click="openFieldImage(h.key)"
+              <div
+                class="flex min-w-0 gap-1.5"
+                :class="compactImages ? 'flex-nowrap overflow-x-auto overscroll-x-contain pb-0.5' : 'flex-wrap'"
               >
-                <img
-                  :src="fieldImage(h.key)!"
-                  alt=""
-                  class="max-h-full max-w-full object-contain"
-                />
-              </button>
-              <input
+                <button
+                  v-for="(source, imageIndex) in fieldImages(h.key)"
+                  :key="`${imageIndex}-${source}`"
+                  type="button"
+                  class="flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-base-300 bg-base-200/60"
+                  :class="compactImages ? 'h-12 w-12' : 'h-16 w-16'"
+                  :aria-label="t('image.quicklook')"
+                  @click="openFieldImage(source)"
+                >
+                  <img :src="source" alt="" class="max-h-full max-w-full object-contain" />
+                </button>
+              </div>
+              <textarea
                 :id="`field-${index}`"
-                :value="fieldImage(h.key)!"
-                class="input input-bordered input-sm h-8 min-h-8 w-full min-w-0 text-xs"
+                :key="`${props.sheetId ?? ''}-${props.selectedRowIndex ?? 'new'}-${h.key}-image`"
+                :value="formData[h.key]"
+                class="form-text-input textarea textarea-bordered w-full resize-none overflow-y-auto rounded-lg bg-base-100 text-xs scrollbar-thin !min-h-0 !py-1.5 !leading-snug"
                 :aria-label="h.label"
-                :title="fieldImage(h.key)!"
-                @input="onFieldInput(h.key, ($event.target as HTMLInputElement).value)"
+                @input="onTextAreaInput(h.key, $event)"
                 @blur="markTouched(h.key)"
               />
             </div>
@@ -875,7 +948,7 @@ onUnmounted(() => {
               :id="`field-${index}`"
               :key="`${props.sheetId ?? ''}-${props.selectedRowIndex ?? 'new'}-${h.key}`"
               :value="formData[h.key]"
-              class="form-text-input textarea textarea-bordered w-full text-xs bg-base-100 rounded-lg resize-none scrollbar-thin overflow-y-auto !min-h-0 !py-1.5 !leading-snug"
+              class="form-text-input textarea textarea-bordered w-full resize-none overflow-y-auto rounded-lg bg-base-100 text-xs scrollbar-thin !min-h-0 !py-1.5 !leading-snug"
               :class="{ 'textarea-error': !!visibleFieldError(h.key) }"
               :aria-label="h.label"
               :aria-invalid="!!visibleFieldError(h.key)"
@@ -887,7 +960,7 @@ onUnmounted(() => {
               <input
                 type="text"
                 :id="`field-${index}`"
-                class="form-text-input input input-bordered w-full text-xs bg-base-100 rounded-lg pr-8"
+                class="form-text-input input input-bordered w-full rounded-lg bg-base-100 pr-8 text-xs"
                 :class="{ 'input-error': !!visibleFieldError(h.key) }"
                 :value="formData[h.key]"
                 :aria-label="h.label"
@@ -920,7 +993,7 @@ onUnmounted(() => {
               :id="`field-${h.key}`"
               :value="formData[h.key]"
               type="number"
-              class="form-text-input input input-bordered w-full text-xs bg-base-100 rounded-lg"
+              class="form-text-input input input-bordered w-full rounded-lg bg-base-100 text-xs"
               :class="{ 'input-error': !!visibleFieldError(h.key) }"
               :aria-label="h.label"
               :aria-invalid="!!visibleFieldError(h.key)"
@@ -933,7 +1006,7 @@ onUnmounted(() => {
 
             <label
               v-else
-              class="form-text-input flex items-center gap-2.5 cursor-pointer bg-base-100 rounded-lg border border-base-300"
+              class="form-text-input flex cursor-pointer items-center gap-2.5 rounded-lg border border-base-300 bg-base-100"
             >
               <input
                 type="checkbox"
@@ -1008,28 +1081,6 @@ onUnmounted(() => {
         </ul>
       </div>
 
-      <div v-if="isEditMode" class="grid grid-cols-2 gap-1.5">
-        <button
-          type="button"
-          class="btn btn-outline btn-sm h-8 min-h-8 gap-1.5 px-2 text-xs font-medium"
-          :title="t('form.copy.row.n.row.just', { n: (props.selectedRowIndex ?? 0) + 1 })"
-          :disabled="!props.selectedRow"
-          @click="handleCreate('after', 'copy')"
-        >
-          <Copy class="h-3.5 w-3.5 shrink-0" />
-          <span class="truncate">{{ t('form.copy.below') }}</span>
-        </button>
-        <button
-          type="button"
-          class="btn btn-outline btn-sm h-8 min-h-8 gap-1.5 px-2 text-xs font-medium"
-          :title="t('form.add.blank.row.end.table')"
-          @click="handleCreate('end', 'blank')"
-        >
-          <Plus class="h-3.5 w-3.5 shrink-0" />
-          <span class="truncate">{{ t('form.add.end') }}</span>
-        </button>
-      </div>
-
       <button
         v-if="!isEditMode"
         type="button"
@@ -1040,26 +1091,6 @@ onUnmounted(() => {
         <Plus class="w-4 h-4" />
         {{ t('form.create.row') }}
       </button>
-
-      <div class="flex items-center gap-1">
-        <button
-          v-if="isEditMode"
-          type="button"
-          class="btn btn-ghost btn-sm h-8 min-h-8 gap-1 px-2 text-xs font-medium text-error hover:bg-error/10"
-          :title="t('form.delete.selected.row.table')"
-          @click="handleDeleteClick"
-        >
-          <Trash2 class="h-3.5 w-3.5" /> {{ t('form.delete.row') }}
-        </button>
-        <button
-          type="button"
-          class="btn btn-ghost btn-sm h-8 min-h-8 gap-1 px-2 text-xs font-medium text-base-content/70"
-          :title="t('form.clear.form.new.row')"
-          @click="handleNewRowMode"
-        >
-          <RotateCcw class="h-3.5 w-3.5" /> {{ t('form.clear') }}
-        </button>
-      </div>
     </div>
 
     <!-- ── Confirm Dialog Xóa Dòng ─────────────────────────────────────────── -->

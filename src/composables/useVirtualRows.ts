@@ -1,4 +1,4 @@
-import { computed, type Ref } from 'vue'
+import { computed, isRef, type Ref } from 'vue'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 
 export interface VirtualRow {
@@ -13,21 +13,24 @@ export interface VirtualRow {
  */
 export function useVirtualRows(input: {
   count: Ref<number>
-  estimateSize: number
+  estimateSize: Ref<number> | number
   scrollElement: Ref<HTMLElement | null>
   measure?: boolean
   overscan?: number
 }) {
   const virtualizer = useVirtualizer(
-    computed(() => ({
+    computed(() => {
+      const size = isRef(input.estimateSize) ? input.estimateSize.value : input.estimateSize
+      return {
       count: input.count.value,
       getScrollElement: () => input.scrollElement.value,
-      estimateSize: () => input.estimateSize,
+      estimateSize: () => size,
       overscan: input.overscan ?? 8,
       measureElement: input.measure
         ? (element: HTMLElement) => element.getBoundingClientRect().height
         : undefined,
-    })),
+      }
+    }),
   )
 
   const items = computed<VirtualRow[]>(() =>

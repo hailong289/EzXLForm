@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { imageLabel, imageSource } from './imageSource.ts'
+import { imageLabel, imageSource, imageSources } from './imageSource.ts'
 
 describe('image source', () => {
   it('accepts image urls and data urls', () => {
@@ -20,6 +20,17 @@ describe('image source', () => {
     assert.equal(imageSource('https://example.com/page'), null)
     assert.equal(imageSource('notes.png'), null)
     assert.equal(imageSource(12), null)
+  })
+
+  it('accepts a comma-separated list of images', () => {
+    const a = 'https://cdn.example.com/a/photo.png'
+    const b = 'https://cdn.example.com/b/other.jpg?w=1'
+    assert.deepEqual(imageSources(`${a}, ${b}`), [a, b])
+    assert.deepEqual(imageSources(`${a},${b}`), [a, b])
+    assert.deepEqual(imageSources(`data:image/png;base64,aaaa, ${a}`), ['data:image/png;base64,aaaa', a])
+    assert.deepEqual(imageSources(a), [a])
+    assert.deepEqual(imageSources(`${a}, notes`), [])
+    assert.deepEqual(imageSources('Nguyễn Văn An, hello'), [])
   })
 
   it('uses the file name as the quick look title', () => {

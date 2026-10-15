@@ -6,7 +6,7 @@ const appConfigStore = useAppConfigStore()
 </script>
 
 <template>
-  <div class="toast toast-top toast-end z-50 pointer-events-none p-4">
+  <div class="toast toast-center z-50 !bottom-16 !top-auto w-[min(22rem,calc(100vw-1.5rem))] pointer-events-none p-3">
     <div
       v-for="toast in appConfigStore.toasts"
       :key="toast.id"

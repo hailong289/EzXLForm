@@ -51,10 +51,10 @@ const windowLabel = computed(() => {
 
 <template>
   <div
-    class="flex items-center justify-between bg-base-200 border-t border-base-300 px-4 h-6 text-xs opacity-70 select-none"
+    class="flex h-6 select-none items-center justify-between overflow-x-auto border-t border-base-300 bg-base-200 px-4 text-xs tabular-nums opacity-70 max-md:h-7 max-md:px-3"
   >
     <!-- ── Left: Rows, Selected, Columns ─────────────────────────────────── -->
-    <div class="flex items-center gap-3">
+    <div class="flex shrink-0 items-center gap-3">
 
       <!-- Tổng số dòng -->
       <span v-if="activeSheet" class="flex items-center gap-1">
@@ -84,12 +84,12 @@ const windowLabel = computed(() => {
     </div>
 
     <!-- ── Right: File name, Page info, Undo depth ───────────────────────── -->
-    <div class="flex items-center gap-3">
+    <div class="flex shrink-0 items-center gap-3">
 
       <!-- Undo stack depth (chỉ hiện khi có lịch sử) -->
       <span
         v-if="undoStackSize > 0"
-        class="flex items-center gap-1"
+        class="hidden items-center gap-1 md:flex"
         :title="t('status.can.undo.n.actions', { n: undoStackSize })"
       >
         <span class="opacity-60">Undo:</span>
@@ -102,7 +102,7 @@ const windowLabel = computed(() => {
       <!-- Tên file -->
       <span
         v-if="fileName"
-        class="max-w-[180px] truncate"
+        class="max-w-[96px] truncate md:max-w-[180px]"
         :title="fileName"
       >
         {{ fileName }}

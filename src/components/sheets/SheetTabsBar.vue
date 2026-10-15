@@ -7,6 +7,7 @@ import { useAppConfigStore } from '@/stores/appConfigStore'
 import { useFormPresets } from '@/composables/useFormPresets'
 import type { SheetData } from '@/types/excel'
 import { ensureSourceGrid, headerChoiceIndexes, previewGridLine } from '@/utils/sheetGrid'
+import { menuWidthPx } from '@/utils/workspaceFrame'
 import { useLocale } from '@/composables/useLocale'
 
 const { t } = useLocale()
@@ -38,13 +39,13 @@ function toggleSheetMenu(sheetId: string, event: MouseEvent) {
   }
   const button = event.currentTarget as HTMLElement
   const rect = button.getBoundingClientRect()
-  const menuWidth = 260
+  const menuWidth = menuWidthPx(window.innerWidth, 260)
   const menuHeight = 320
   const left = Math.max(8, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8))
   const openUp = rect.top > menuHeight || rect.bottom + menuHeight > window.innerHeight
   menuStyle.value = openUp
-    ? { top: `${rect.top - 6}px`, left: `${left}px`, transform: 'translateY(-100%)' }
-    : { top: `${rect.bottom + 6}px`, left: `${left}px` }
+    ? { top: `${rect.top - 6}px`, left: `${left}px`, width: `${menuWidth}px`, transform: 'translateY(-100%)' }
+    : { top: `${rect.bottom + 6}px`, left: `${left}px`, width: `${menuWidth}px` }
   openMenuId.value = sheetId
 }
 
@@ -207,7 +208,7 @@ async function onDeleteSheet(sheet: SheetData) {
 <template>
   <div
     v-if="workbookStore.workbook"
-    class="flex items-center bg-base-200 border-t border-base-300 h-9 px-2 overflow-x-auto scrollbar-thin select-none"
+    class="flex h-9 select-none items-center overflow-x-auto border-t border-base-300 bg-base-200 px-2 scrollbar-thin max-md:h-10"
   >
     <!-- Add Sheet Button -->
     <button
@@ -223,15 +224,15 @@ async function onDeleteSheet(sheet: SheetData) {
       <div
         v-for="sheet in workbookStore.sheetList"
         :key="sheet.id"
-        class="sheet-tab group relative flex items-center h-7 px-2.5 rounded-t text-xs cursor-pointer border-t-2 transition-colors"
+        class="sheet-tab group relative flex h-7 cursor-pointer items-center rounded-t border-t-2 px-2.5 text-xs transition-colors max-md:h-8 max-md:rounded-md max-md:border-t-0 max-md:px-2"
         :class="
           sheet.id === workbookStore.activeSheet?.id
-            ? 'bg-base-100 border-primary font-bold shadow-sm'
-            : 'bg-base-300/40 hover:bg-base-300 border-transparent text-base-content/70'
+            ? 'border-primary bg-base-100 font-bold shadow-sm max-md:bg-primary max-md:font-medium max-md:text-primary-content max-md:shadow-none'
+            : 'border-transparent bg-base-300/40 text-base-content/70 hover:bg-base-300 max-md:bg-transparent'
         "
         @click="selectSheet(sheet.id)"
       >
-        <Table class="w-3.5 h-3.5 mr-1.5 opacity-60 flex-shrink-0" />
+        <Table class="mr-1.5 h-3.5 w-3.5 shrink-0 opacity-60 max-md:opacity-90" />
 
         <!-- Inline rename or Display text -->
         <input
@@ -265,7 +266,7 @@ async function onDeleteSheet(sheet: SheetData) {
         <Teleport to="body">
           <div
             v-if="openMenuId === sheet.id"
-            class="fixed z-[80] w-[260px] rounded-box border border-base-300 bg-base-100 p-1 shadow-xl text-xs"
+            class="fixed z-[80] rounded-box border border-base-300 bg-base-100 p-1 shadow-xl text-xs"
             :style="menuStyle"
             @click.stop
           >

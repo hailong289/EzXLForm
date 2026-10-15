@@ -10,6 +10,7 @@ export interface ListWindow {
 
 interface AppConfigState {
   viewMode: 'editor' | 'preview'
+  phoneScreen: 'table' | 'form'
   splitRatio: number
   searchQuery: string
   filterColumn: string
@@ -23,6 +24,7 @@ interface AppConfigState {
 export const useAppConfigStore = defineStore('appConfig', {
   state: (): AppConfigState => ({
     viewMode: 'editor',
+    phoneScreen: 'table',
     splitRatio: 55,
     searchQuery: '',
     filterColumn: '',
@@ -40,6 +42,11 @@ export const useAppConfigStore = defineStore('appConfig', {
   actions: {
     setViewMode(mode: 'editor' | 'preview') {
       this.viewMode = mode
+    },
+
+    setPhoneScreen(screen: 'table' | 'form') {
+      this.phoneScreen = screen
+      this.viewMode = 'editor'
     },
 
     setSplitRatio(ratio: number) {

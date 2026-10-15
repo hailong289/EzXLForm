@@ -34,6 +34,14 @@ import { MARK_COLORS, useRowMarks, type MarkColor } from '@/composables/rowMarks
 import { useFormPresets } from '@/composables/useFormPresets'
 import type { PresetDraftError } from '@/utils/formPresets'
 import { useLocale } from '@/composables/useLocale'
+import {
+  allowInlineCellEdit,
+  clampFormWidth as clampFormWidthPx,
+  nextEditorVisibility,
+  panesForTier,
+  workspaceTier,
+  type EditorPanes,
+} from '@/utils/workspaceFrame'
 
 const { t } = useLocale()
 
@@ -49,39 +57,39 @@ const editorContainerRef = ref<HTMLDivElement | null>(null)
 const formWidth = ref<number | null>(null)
 const isResizingForm = ref(false)
 
-function startResizeForm(e: MouseEvent) {
+const viewportWidth = ref(window.innerWidth)
+const tier = computed(() => workspaceTier(viewportWidth.value))
+
+function startResizeForm(e: PointerEvent) {
+  if (tier.value === 'phone') return
   e.preventDefault()
   if (formWidth.value == null && editorContainerRef.value) {
-    formWidth.value = editorContainerRef.value.clientWidth * 0.5
+    const width = editorContainerRef.value.clientWidth
+    formWidth.value = clampFormWidthPx(tier.value, width, width * 0.5)
   }
   isResizingForm.value = true
-  document.addEventListener('mousemove', onResizeMouseMove)
-  document.addEventListener('mouseup', stopResizeForm)
+  document.addEventListener('pointermove', onResizePointerMove)
+  document.addEventListener('pointerup', stopResizeForm)
 }
 
-function maxFormWidth() {
-  const width = editorContainerRef.value?.clientWidth ?? 800
-  return Math.max(340, width * 0.5)
-}
-
-function onResizeMouseMove(e: MouseEvent) {
+function onResizePointerMove(e: PointerEvent) {
   if (!isResizingForm.value || !editorContainerRef.value) return
   const rect = editorContainerRef.value.getBoundingClientRect()
-  const newWidth = e.clientX - rect.left
-  formWidth.value = Math.max(340, Math.min(newWidth, maxFormWidth()))
+  formWidth.value = clampFormWidthPx(tier.value, rect.width, e.clientX - rect.left)
 }
 
 function stopResizeForm() {
   if (isResizingForm.value) {
     isResizingForm.value = false
-    document.removeEventListener('mousemove', onResizeMouseMove)
-    document.removeEventListener('mouseup', stopResizeForm)
+    document.removeEventListener('pointermove', onResizePointerMove)
+    document.removeEventListener('pointerup', stopResizeForm)
   }
 }
 
-function clampFormWidth() {
+function clampStoredFormWidth() {
   if (formWidth.value == null) return
-  formWidth.value = Math.max(340, Math.min(formWidth.value, maxFormWidth()))
+  const width = editorContainerRef.value?.clientWidth ?? 800
+  formWidth.value = clampFormWidthPx(tier.value, width, formWidth.value)
 }
 
 const tableScrollRef = ref<HTMLElement | null>(null)
@@ -117,10 +125,18 @@ function onSumScroll() {
   syncingTableScroll = false
 }
 
+function onViewportResize() {
+  viewportWidth.value = window.innerWidth
+  syncPanesToTier()
+  clampStoredFormWidth()
+}
+
 onMounted(() => {
-  clampFormWidth()
+  clampStoredFormWidth()
+  syncPanesToTier()
+  window.addEventListener('resize', onViewportResize)
   if (editorContainerRef.value) {
-    editorResizeObserver = new ResizeObserver(() => clampFormWidth())
+    editorResizeObserver = new ResizeObserver(() => clampStoredFormWidth())
     editorResizeObserver.observe(editorContainerRef.value)
   }
   nextTick(() => {
@@ -138,8 +154,9 @@ onUnmounted(() => {
   editorResizeObserver?.disconnect()
   headerSizeObserver?.disconnect()
   window.removeEventListener('pagehide', onEditorPageHide)
-  document.removeEventListener('mousemove', onResizeMouseMove)
-  document.removeEventListener('mouseup', stopResizeForm)
+  window.removeEventListener('resize', onViewportResize)
+  document.removeEventListener('pointermove', onResizePointerMove)
+  document.removeEventListener('pointerup', stopResizeForm)
 })
 
 function onEditorPageHide() {
@@ -264,15 +281,46 @@ function onChangeHeaderRow(event: Event) {
 const showTableList = ref(true)
 const showForm = ref(true)
 
+function currentPanes(): EditorPanes {
+  return { form: showForm.value, table: showTableList.value }
+}
+
+function applyPanes(next: EditorPanes) {
+  showForm.value = next.form
+  showTableList.value = next.table
+  if (tier.value !== 'phone') return
+  const screen = next.form && !next.table ? 'form' : 'table'
+  if (appConfigStore.phoneScreen !== screen) appConfigStore.setPhoneScreen(screen)
+}
+
+watch(
+  () => appConfigStore.phoneScreen,
+  (screen) => {
+    if (tier.value !== 'phone') return
+    const next = screen === 'form' ? { form: true, table: false } : { form: false, table: true }
+    if (showForm.value === next.form && showTableList.value === next.table) return
+    showForm.value = next.form
+    showTableList.value = next.table
+  },
+)
+
+function syncPanesToTier() {
+  applyPanes(panesForTier(tier.value, currentPanes()))
+}
+
 function hideForm() {
-  if (!showTableList.value) return
-  showForm.value = false
+  applyPanes(nextEditorVisibility(tier.value, currentPanes(), 'hide-form'))
 }
 
 function hideTable() {
-  if (!showForm.value) return
-  showTableList.value = false
+  applyPanes(nextEditorVisibility(tier.value, currentPanes(), 'hide-table'))
 }
+
+function showFormPane() {
+  applyPanes(nextEditorVisibility(tier.value, currentPanes(), 'show-form'))
+}
+
+syncPanesToTier()
 
 // Local Search / Filter
 const searchInput = ref(appConfigStore.searchQuery)
@@ -720,9 +768,11 @@ function publishListWindow() {
 // Select row to edit in Form
 function selectRowForEdit(rowIndex: number) {
   selectedRowIndex.value = rowIndex
+  applyPanes(nextEditorVisibility(tier.value, currentPanes(), 'select-row'))
 }
 
 function startCellEdit(rowIndex: number, columnKey: string) {
+  if (!allowInlineCellEdit(tier.value)) return
   selectedRowIndex.value = rowIndex
   selectionStore.setEditingCell(rowIndex, columnKey)
 }
@@ -1301,6 +1351,7 @@ function addNamedColumn() {
         :data-revision="workbookStore.dataRevision"
         :total-rows="rowTotal"
         :table-hidden="!showTableList"
+        :phone="tier === 'phone'"
         :preset-options="formPresets.presets.value"
         :selected-preset-id="formPresets.selectedPresetId.value"
         :shown-header-keys="shownHeaderKeys"
@@ -1329,11 +1380,11 @@ function addNamedColumn() {
 
     <!-- ── THANH RESIZER KÉO CO DÃN ĐỘ RỘNG FORM ───────────────────────────── -->
     <div
-      v-show="showTableList"
-      class="w-1.5 hover:w-2 bg-base-300 hover:bg-primary cursor-col-resize flex-shrink-0 transition-colors z-20 relative group select-none flex items-center justify-center"
+      v-show="showTableList && tier !== 'phone'"
+      class="w-1.5 hover:w-2 bg-base-300 hover:bg-primary cursor-col-resize flex-shrink-0 transition-colors z-20 relative group select-none flex items-center justify-center touch-none"
       :class="{ 'bg-primary w-2': isResizingForm }"
       :title="t('table.drag.resize.form')"
-      @mousedown="startResizeForm"
+      @pointerdown="startResizeForm"
     >
       <div class="h-8 w-0.5 bg-base-content/30 group-hover:bg-primary-content rounded-full" />
     </div>
@@ -1342,11 +1393,11 @@ function addNamedColumn() {
     <div v-show="showTableList" class="flex-1 flex flex-col h-full overflow-hidden min-w-0">
       <!-- Toolbar tìm kiếm & Toggle -->
       <div
-        class="flex items-center justify-between p-2 bg-base-200/70 border-b border-base-300 gap-2 flex-wrap text-xs"
+        class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 bg-base-200/70 p-2 text-xs max-md:gap-1.5 max-md:px-2 max-md:py-1.5"
       >
         <!-- Search & Filter -->
-        <div class="flex items-center gap-2 flex-1 min-w-[200px]">
-          <div class="flex items-center gap-1 flex-1 max-w-xs">
+        <div class="flex min-w-0 basis-full flex-wrap items-center gap-2 sm:basis-auto sm:flex-nowrap">
+          <div class="flex max-w-xs flex-1 items-center gap-1 max-md:max-w-none">
             <div class="relative flex-1">
               <input
                 v-model="searchInput"
@@ -1372,7 +1423,7 @@ function addNamedColumn() {
 
           <select
             v-model="filterCol"
-            class="select select-xs select-bordered text-xs max-w-[9rem]"
+            class="select select-xs select-bordered max-w-[9rem] text-xs"
             :title="t('common.all.columns')"
             @change="onSearchChange"
           >
@@ -1394,10 +1445,10 @@ function addNamedColumn() {
           </button>
         </div>
 
-        <label class="flex items-center gap-1 flex-shrink-0">
-          <span class="opacity-60 text-[11px] whitespace-nowrap">Header</span>
+        <label class="flex min-w-0 max-w-full shrink-0 items-center gap-1">
+          <span class="whitespace-nowrap text-[11px] opacity-60 max-md:sr-only">Header</span>
           <select
-            class="select select-xs select-bordered max-w-[180px] text-xs"
+            class="select select-xs select-bordered w-[min(100%,11rem)] text-xs max-md:w-28"
             :value="activeSheet?.headerRowIndex ?? 0"
             :disabled="!!activeSheet?.paged"
             :title="t('table.choose.header.row.sheet')"
@@ -1409,14 +1460,14 @@ function addNamedColumn() {
           </select>
         </label>
 
-        <form v-if="rowTotal > 0" class="flex items-center gap-1" @submit.prevent="jumpToRowNumber">
-          <span class="opacity-60 whitespace-nowrap">{{ t('table.go.row') }}</span>
+        <form v-if="rowTotal > 0" class="flex max-w-full shrink-0 flex-wrap items-center gap-1 max-md:flex-nowrap" @submit.prevent="jumpToRowNumber">
+          <span class="whitespace-nowrap opacity-60 max-md:sr-only">{{ t('table.go.row') }}</span>
           <input
             v-model.number="jumpRowInput"
             type="number"
             min="1"
             :max="rowTotal"
-            class="input input-xs input-bordered w-24 text-center"
+            class="input input-xs input-bordered w-16 text-center sm:w-24"
             :title="t('common.type.row.number.press.enter')"
             :aria-label="t('table.go.row')"
           />
@@ -1441,18 +1492,18 @@ function addNamedColumn() {
 
         <!-- Nút thu gọn / mở rộng bảng -->
         <button
-          v-if="!showForm"
-          class="btn btn-ghost btn-xs gap-1 text-xs"
+          v-if="!showForm && tier !== 'phone'"
+          class="btn btn-ghost btn-xs shrink-0 gap-1 text-xs"
           :title="t('table.show.form')"
-          @click="showForm = true"
+          @click="showFormPane"
         >
           <PanelLeftOpen class="w-3.5 h-3.5" />
           <span class="hidden sm:inline">{{ t('table.show.form') }}</span>
         </button>
         <button
-          class="btn btn-ghost btn-xs gap-1 text-xs"
+          v-if="showForm"
+          class="btn btn-ghost btn-xs shrink-0 gap-1 text-xs"
           :title="t('table.hide.table')"
-          :disabled="!showForm"
           @click="hideTable"
         >
           <PanelRightClose class="w-3.5 h-3.5" />

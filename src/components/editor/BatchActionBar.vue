@@ -18,6 +18,7 @@ import { useBatchOperations } from '@/composables/useBatchOperations'
 import { physicalOf, getRow, hasSheetOrder } from '@/composables/rowPageStore'
 import { useRowMarks } from '@/composables/rowMarks'
 import { sheetRowCount } from '@/utils/sheetGrid'
+import { BATCH_BAR_BOTTOM_PX } from '@/utils/workspaceFrame'
 import type { ColumnHeader, BatchOperationType } from '@/types/excel'
 
 const props = defineProps<{
@@ -146,7 +147,8 @@ async function handleDeleteSelected() {
   <Transition name="batch-bar">
     <div
       v-if="selectionStore.selectedCount > 0"
-      class="fixed bottom-12 left-1/2 -translate-x-1/2 z-40 bg-neutral text-neutral-content shadow-2xl rounded-2xl px-4 py-2.5 flex items-center gap-3 border border-neutral-focus/50 select-none max-w-[90vw] flex-wrap"
+      class="fixed left-1/2 z-40 flex max-w-[calc(100vw-1rem)] -translate-x-1/2 flex-wrap items-center gap-3 rounded-2xl border border-neutral-focus/50 bg-neutral px-4 py-2.5 text-neutral-content shadow-2xl select-none"
+      :style="{ bottom: `${BATCH_BAR_BOTTOM_PX}px` }"
     >
       <!-- Left: Counter -->
       <div class="flex items-center gap-1.5 font-bold text-xs pr-2 border-r border-neutral-content/20">
