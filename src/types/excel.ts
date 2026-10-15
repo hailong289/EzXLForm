@@ -28,6 +28,8 @@ export interface ColumnHeader {
   dataType?: 'text' | 'number' | 'date' | 'boolean'
   /** Cách hiện ngày, ví dụ dd/MM/yyyy. Chỉ dùng khi dataType là date */
   dateFormat?: string
+  /** Mã hiện số kiểu Excel, ví dụ #,##0.00 hoặc 0%. Chỉ dùng khi dataType là number */
+  numFmt?: string
   visible?: boolean
 }
 

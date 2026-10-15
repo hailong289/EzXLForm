@@ -8,7 +8,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "type-check": "vue-tsc --noEmit",
-    "test": "tsx --test src/utils/formPresets.test.ts src/cloud/tokenCipher.test.ts src/utils/imageSource.test.ts src/utils/workspaceFrame.test.ts",
+    "test": "tsx --test src/utils/formPresets.test.ts src/cloud/tokenCipher.test.ts src/utils/imageSource.test.ts src/utils/workspaceFrame.test.ts src/utils/numberFormat.test.ts",
     "tauri": "tauri"
   },
   "dependencies": {

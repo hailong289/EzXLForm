@@ -24,8 +24,10 @@ import RowForm from './RowForm.vue'
 import FormPresetDialog from './FormPresetDialog.vue'
 import TableHeaderCell from './TableHeaderCell.vue'
 import TableRowCell from './TableRowCell.vue'
+import FormatCellsDialog from './FormatCellsDialog.vue'
 import BatchActionBar from './BatchActionBar.vue'
 import type { AdvancedFilterRule, CellValue, ColumnHeader, RowData } from '@/types/excel'
+import type { ColumnFormat } from '@/utils/numberFormat'
 import { ensureSourceGrid, headerChoiceIndexes, previewGridLine, sheetRowCount } from '@/utils/sheetGrid'
 import { DATE_FORMATS, DEFAULT_DATE_FORMAT } from '@/utils/dateFormat'
 import { activeFilterRules, operatorsFor, operatorNeedsValue, rowMatchesFilters } from '@/utils/rowFilter'
@@ -1309,7 +1311,23 @@ function onHeaderSetType(key: string, type: ColumnHeader['dataType']) {
 }
 
 const showColumnEditor = ref(false)
+const formatHeader = ref<ColumnHeader | null>(null)
 const newColumnLabel = ref('')
+
+function openFormatCells(key: string) {
+  formatHeader.value = headers.value.find((item) => item.key === key) ?? null
+}
+
+function applyFormat(format: ColumnFormat) {
+  const header = formatHeader.value
+  if (!header) return
+  header.dataType = format.dataType
+  header.dateFormat = format.dateFormat
+  header.numFmt = format.numFmt
+  workbookStore.isDirty = true
+  workbookStore.dataRevision += 1
+  formatHeader.value = null
+}
 
 function addNamedColumn() {
   if (!activeSheet.value) return
@@ -1373,6 +1391,7 @@ function addNamedColumn() {
         @select-next="handleSelectNext"
         @jump-to-row="selectRowForEdit"
         @set-date-format="onHeaderSetDateFormat"
+        @format-column="openFormatCells"
         @hide="hideForm"
         @show-table="showTableList = true"
       />
@@ -1629,6 +1648,7 @@ function addNamedColumn() {
                 @sort-asc="(k) => onHeaderSort(k, 'asc')"
                 @sort-desc="(k) => onHeaderSort(k, 'desc')"
                 @set-type="onHeaderSetType"
+                @format-cells="openFormatCells"
                 @drag-start="onHeaderDragStart"
                 @drag-over="onHeaderDragOver"
                 @drop="onHeaderDrop"
@@ -1718,6 +1738,7 @@ function addNamedColumn() {
                 :row-index="logicalAt(item.index)"
                 :data-type="h.dataType"
                 :date-format="h.dateFormat"
+                :num-fmt="h.numFmt"
                 :is-editing="
                   selectionStore.editingCell?.rowIndex === logicalAt(item.index) &&
                   selectionStore.editingCell?.columnKey === h.key
@@ -1865,5 +1886,11 @@ function addNamedColumn() {
       @remove="onRemovePreset"
     />
     <ImageQuickLook />
+    <FormatCellsDialog
+      v-if="formatHeader"
+      :header="formatHeader"
+      @close="formatHeader = null"
+      @apply="applyFormat"
+    />
   </div>
 </template>

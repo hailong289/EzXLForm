@@ -4,6 +4,7 @@ import type { CellValue, ColumnHeader } from '@/types/excel'
 import { useImageQuickLook } from '@/composables/imageQuickLook'
 import { useLocale } from '@/composables/useLocale'
 import { DEFAULT_DATE_FORMAT, formatDateValue, parseDateToIso } from '@/utils/dateFormat'
+import { formatNumber } from '@/utils/numberFormat'
 import { imageLabel, imageSources } from '@/utils/imageSource'
 
 const props = defineProps<{
@@ -12,6 +13,7 @@ const props = defineProps<{
   rowIndex: number
   dataType?: ColumnHeader['dataType']
   dateFormat?: string
+  numFmt?: string
   isEditing: boolean
 }>()
 
@@ -94,7 +96,7 @@ function formatDisplay(val: CellValue): string {
   if (val === null || val === undefined || val === '') return ''
   if (props.dataType === 'number') {
     const num = Number(val)
-    return isNaN(num) ? String(val) : num.toLocaleString()
+    return isNaN(num) ? String(val) : formatNumber(num, props.numFmt)
   }
   if (props.dataType === 'boolean') {
     return val ? '✓' : '✗'

@@ -15,6 +15,9 @@ import {
   GripVertical,
 } from 'lucide-vue-next'
 import type { ColumnHeader } from '@/types/excel'
+import { useLocale } from '@/composables/useLocale'
+
+const { t } = useLocale()
 
 const props = defineProps<{
   header: ColumnHeader
@@ -35,6 +38,7 @@ const emit = defineEmits<{
   'sort-asc': [key: string]
   'sort-desc': [key: string]
   'set-type': [key: string, type: 'text' | 'number' | 'date' | 'boolean']
+  'format-cells': [key: string]
   'drag-start': [key: string]
   'drag-over': [key: string]
   drop: [key: string]
@@ -182,6 +186,9 @@ function onGripDragStart(event: DragEvent) {
 
           <!-- Submenu Kiểu dữ liệu -->
           <li class="menu-title py-0.5 text-[10px] uppercase opacity-60">Kiểu dữ liệu</li>
+          <li>
+            <a class="py-1" @click="emit('format-cells', header.key)">{{ t('format.menu') }}</a>
+          </li>
           <li>
             <a
               class="py-0.5"

@@ -71,6 +71,7 @@ const emit = defineEmits<{
   'select-next': []
   'jump-to-row': [index: number]
   'edit-columns': []
+  'format-column': [key: string]
   'set-date-format': [key: string, format: string]
   'select-preset': [presetId: string]
   'manage-presets': []
@@ -887,14 +888,16 @@ onUnmounted(() => {
             </label>
 
             <div class="flex items-center gap-1 flex-shrink-0">
-              <span
-                v-if="h.dataType !== 'date'"
-                class="badge badge-ghost badge-xs text-[10px] uppercase font-mono opacity-50"
+              <button
+                type="button"
+                class="badge badge-ghost badge-xs font-mono text-[10px] uppercase opacity-50"
+                :title="t('format.menu')"
+                @click="emit('format-column', h.key)"
               >
                 {{ h.dataType || 'text' }}
-              </span>
+              </button>
               <select
-                v-else-if="h.dataType === 'date'"
+                v-if="h.dataType === 'date'"
                 class="select select-xs select-bordered h-6 min-h-0 w-[6.5rem] font-mono text-[10px]"
                 :value="datePattern(h)"
                 :title="t('form.date.format')"
