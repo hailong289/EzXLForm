@@ -208,6 +208,7 @@ async function onDeleteSheet(sheet: SheetData) {
 <template>
   <div
     v-if="workbookStore.workbook"
+    data-tour="sheets"
     class="flex h-9 select-none items-center overflow-x-auto border-t border-base-300 bg-base-200 px-2 scrollbar-thin max-md:h-10"
   >
     <!-- Add Sheet Button -->

@@ -5,7 +5,7 @@
  * Bao gồm: Logo, thao tác file (Mở/Xuất), chuyển View Mode,
  * nút Undo/Redo, tìm kiếm, và ThemeDropdown.
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import {
   Upload,
   Download,
@@ -40,6 +40,7 @@ import LanguageDropdown from '@/components/common/LanguageDropdown.vue'
 import HelpGuide from '@/components/modals/HelpGuide.vue'
 import { useLocale } from '@/composables/useLocale'
 import { menuWidthPx } from '@/utils/workspaceFrame'
+import { startPageTour } from '@/composables/usePageTour'
 
 // ─── Emits ──────────────────────────────────────────────────────────────────
 const emit = defineEmits<{
@@ -86,6 +87,11 @@ const mobileOpen = ref(false)
 const { t, locale } = useLocale()
 const viewportWidth = ref(window.innerWidth)
 const menuWidth = computed(() => `${menuWidthPx(viewportWidth.value, 320)}px`)
+
+function openTour() {
+  closeMenus()
+  nextTick(() => startPageTour(t))
+}
 
 function onViewportResize() {
   viewportWidth.value = window.innerWidth
@@ -159,6 +165,7 @@ function onFileSelected(event: Event) {
         v-if="workbookStore.workbook && viewportWidth < 768"
         class="flex h-9 min-w-0 flex-1 rounded-full bg-base-300/80 p-0.5"
         role="tablist"
+        data-tour="screen"
       >
         <button
           type="button"
@@ -190,7 +197,7 @@ function onFileSelected(event: Event) {
         {{ workbookStore.workbook.meta.fileName }}
       </span>
       <span v-else class="flex-1" />
-      <div v-if="!(workbookStore.workbook && viewportWidth < 768)" class="join shrink-0">
+      <div v-if="!(workbookStore.workbook && viewportWidth < 768)" class="join shrink-0" data-tour="screen">
         <button
           type="button"
           class="btn join-item btn-sm h-11 min-h-11 px-3"
@@ -213,6 +220,7 @@ function onFileSelected(event: Event) {
       <button
         type="button"
         class="btn btn-ghost btn-sm h-9 min-h-9 shrink-0 px-2"
+        data-tour="menu"
         :aria-expanded="mobileOpen"
         :aria-label="t('nav.menu')"
         @click="mobileOpen = !mobileOpen"
@@ -318,7 +326,7 @@ function onFileSelected(event: Event) {
           <List class="h-4 w-4" /> {{ t('nav.tasks') }}
           <span v-if="progressStore.tasks.length" class="badge badge-sm badge-primary">{{ progressStore.tasks.length }}</span>
         </button>
-        <button type="button" class="btn btn-ghost mt-2 h-12 min-h-12 w-full justify-start gap-2 border border-base-300" @click="showHelp = true; closeMenus()">
+        <button type="button" class="btn btn-ghost mt-2 h-12 min-h-12 w-full justify-start gap-2 border border-base-300" @click="openTour()">
           <CircleHelp class="h-4 w-4" /> {{ t('nav.help.f1') }}
         </button>
 
@@ -348,6 +356,7 @@ function onFileSelected(event: Event) {
         <button
           tabindex="0"
           class="btn btn-ghost btn-xs gap-1"
+          data-tour="open"
           :title="t('nav.open.file.computer.cloud')"
         >
           <Upload class="w-3.5 h-3.5" />
@@ -466,6 +475,7 @@ function onFileSelected(event: Event) {
           tabindex="0"
           class="btn btn-ghost btn-xs gap-1"
           :disabled="!workbookStore.workbook"
+          data-tour="export"
           :title="t('nav.export.file')"
         >
           <Download class="w-3.5 h-3.5" />
@@ -531,7 +541,7 @@ function onFileSelected(event: Event) {
 
     <!-- ── Center: View Mode (Editor vs Preview) ───────────────────────── -->
     <div class="flex flex-1 justify-center max-lg:flex-none">
-      <div class="join bg-base-300/40 p-0.5 rounded-lg border border-base-300">
+      <div class="join bg-base-300/40 p-0.5 rounded-lg border border-base-300" data-tour="screen">
         <!-- Editor View -->
         <button
           class="join-item btn btn-xs px-3 gap-1.5"
@@ -563,6 +573,7 @@ function onFileSelected(event: Event) {
       <button
         class="btn btn-ghost btn-xs"
         :disabled="!canUndo"
+        data-tour="undo"
         :title="canUndo ? t('nav.undo.desc', { desc: undoDescription }) : t('nav.nothing.undo')"
         @click="emit('undo')"
       >
@@ -597,6 +608,7 @@ function onFileSelected(event: Event) {
       <!-- Nút Find & Replace -->
       <button
         class="btn btn-ghost btn-xs"
+        data-tour="find"
         :title="t('nav.find.replace.ctrl.h')"
         @click="emit('toggle-find-replace')"
       >
@@ -690,7 +702,7 @@ function onFileSelected(event: Event) {
         type="button"
         class="btn btn-ghost btn-xs"
         :title="t('nav.help.f1')"
-        @click="showHelp = true"
+        @click="openTour"
       >
         <CircleHelp class="w-3.5 h-3.5" />
       </button>
@@ -702,5 +714,5 @@ function onFileSelected(event: Event) {
     </div>
     </div>
   </nav>
-  <HelpGuide v-model="showHelp" />
+  <HelpGuide v-model="showHelp" @tour="openTour" />
 </template>

@@ -1393,6 +1393,7 @@ function addNamedColumn() {
     <div v-show="showTableList" class="flex-1 flex flex-col h-full overflow-hidden min-w-0">
       <!-- Toolbar tìm kiếm & Toggle -->
       <div
+        data-tour="table"
         class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 bg-base-200/70 p-2 text-xs max-md:gap-1.5 max-md:px-2 max-md:py-1.5"
       >
         <!-- Search & Filter -->
@@ -1647,6 +1648,7 @@ function addNamedColumn() {
             <tr
               v-for="item in rowWindow.items.value"
               :key="logicalAt(item.index)"
+              :data-tour="item === rowWindow.items.value[0] ? 'row' : undefined"
               class="data-row border-b border-base-300 transition-colors cursor-pointer"
               :style="{ height: `${ROW_HEIGHT}px` }"
               :class="dataRowClass(item.index)"
@@ -1747,6 +1749,7 @@ function addNamedColumn() {
 
       <div
         ref="sumScrollRef"
+        data-tour="sum"
         class="sum-scroll shrink-0 overflow-x-auto overflow-y-hidden border-t border-base-300 bg-base-200"
         @scroll="onSumScroll"
       >

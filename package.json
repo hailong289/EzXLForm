@@ -14,6 +14,7 @@
   "dependencies": {
     "@azure/msal-browser": "^5.25.0",
     "@tanstack/vue-virtual": "^3.13.40",
+    "driver.js": "^1.9.0",
     "exceljs": "^4.4.0",
     "file-saver": "^2.0.5",
     "lodash-es": "^4.17.21",

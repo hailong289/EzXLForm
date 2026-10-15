@@ -51,6 +51,7 @@ const windowLabel = computed(() => {
 
 <template>
   <div
+    data-tour="status"
     class="flex h-6 select-none items-center justify-between overflow-x-auto border-t border-base-300 bg-base-200 px-4 text-xs tabular-nums opacity-70 max-md:h-7 max-md:px-3"
   >
     <!-- ── Left: Rows, Selected, Columns ─────────────────────────────────── -->

@@ -3,6 +3,7 @@ import { onMounted, onUnmounted } from 'vue'
 import { X } from 'lucide-vue-next'
 
 const open = defineModel<boolean>({ required: true })
+const emit = defineEmits<{ tour: [] }>()
 
 const shortcutGroups = [
   {
@@ -55,6 +56,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       </div>
 
       <div class="max-h-[70vh] space-y-4 overflow-auto px-4 py-3 text-sm">
+        <button type="button" class="btn btn-primary btn-sm" @click="open = false; emit('tour')">
+          Đi trên trang
+        </button>
         <section class="space-y-1">
           <h4 class="font-semibold">Mở file và phiên</h4>
           <p class="text-base-content/80">

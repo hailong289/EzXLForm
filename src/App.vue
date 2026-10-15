@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { FileSpreadsheet, Sparkles, HardDrive, Cloud } from 'lucide-vue-next'
 import AppNavbar from '@/components/layout/AppNavbar.vue'
 import SheetTabsBar from '@/components/sheets/SheetTabsBar.vue'
@@ -18,6 +18,7 @@ import { useExcelParser } from '@/composables/useExcelParser'
 import { LARGE_FILE_BYTES, isImportStopped } from '@/composables/importLargeWorkbook'
 import { useTheme } from '@/composables/useTheme'
 import { useLocale } from '@/composables/useLocale'
+import { startPageTour } from '@/composables/usePageTour'
 import { useHistory } from '@/composables/useHistory'
 import { useSqliteStorage } from '@/composables/useSqliteStorage'
 import CloudBrowserModal from '@/components/modals/CloudBrowserModal.vue'
@@ -204,6 +205,13 @@ const pendingCloud = ref<CloudBinding | null>(null)
 const isDraggingOver = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const showIntro = ref(true)
+let guideStarted = false
+
+function openGuide() {
+  if (guideStarted || (showIntro.value && !workbookStore.workbook)) return
+  guideStarted = true
+  nextTick(() => startPageTour(t))
+}
 
 // ─── File Handling ──────────────────────────────────────────────────────────
 
@@ -512,6 +520,7 @@ async function handleGoHome() {
 
 function openWebEditor() {
   showIntro.value = false
+  openGuide()
 }
 
 async function handleSwitchSession(id: string) {
@@ -629,6 +638,7 @@ function handleHistoryRedo() {
     } catch (err) {
       console.error('Không thể tải phiên SQLite:', err)
     }
+    openGuide()
   })
 
   onUnmounted(() => {
@@ -666,6 +676,7 @@ function handleHistoryRedo() {
       <!-- 1. Landing View khi chưa mở file -->
       <div
         v-else-if="!workbookStore.workbook"
+        data-tour="home"
         class="flex flex-col items-center justify-center h-full p-6 text-center"
         @dragover="handleDragOver"
         @dragleave="handleDragLeave"

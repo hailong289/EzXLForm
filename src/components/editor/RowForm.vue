@@ -598,6 +598,7 @@ onUnmounted(() => {
   >
     <!-- ── Header Panel Gọn Gàng ───────────────────────────────────────────── -->
     <div
+      data-tour="form"
       class="flex items-center border-b border-base-300 bg-base-200/90"
       :class="props.phone ? 'gap-2 px-2 py-1.5' : 'flex-wrap justify-between gap-3 p-3'"
     >
@@ -650,7 +651,7 @@ onUnmounted(() => {
           <PanelRightOpen class="w-3.5 h-3.5" /> {{ t('form.show.table') }}
         </button>
         <div class="dropdown dropdown-end">
-          <button type="button" tabindex="0" class="btn btn-xs btn-outline gap-1" :title="t('form.actions')" :aria-label="t('form.actions')">
+          <button type="button" tabindex="0" data-tour="form-actions" class="btn btn-xs btn-outline gap-1" :title="t('form.actions')" :aria-label="t('form.actions')">
             <Ellipsis class="h-3.5 w-3.5" />
             <span v-if="!props.phone">{{ t('form.actions') }}</span>
           </button>
@@ -698,6 +699,7 @@ onUnmounted(() => {
     <!-- ── Thanh Điều Hướng Dòng & Nhảy Dòng ───────────────────────────────── -->
     <div
       v-if="props.totalRows > 0 && props.phone"
+      data-tour="form-nav"
       class="flex items-center gap-1 border-b border-base-300 px-2 py-1 text-xs"
     >
       <button
@@ -739,6 +741,7 @@ onUnmounted(() => {
     </div>
     <div
       v-else-if="props.totalRows > 0"
+      data-tour="form-nav"
       class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 bg-base-200/50 px-3 py-1.5 text-xs"
     >
       <!-- Jump to row input -->
@@ -857,6 +860,7 @@ onUnmounted(() => {
 
       <div
         v-else
+        data-tour="form-fields"
         data-field-grid
         class="grid w-full min-w-0 items-stretch gap-3"
         :style="{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }"
@@ -1036,6 +1040,7 @@ onUnmounted(() => {
 
     <div
       v-if="hasRows"
+      data-tour="form-add"
       class="flex flex-col gap-1.5 border-t border-base-300 bg-base-200/50 px-3 py-2.5"
     >
       <button
