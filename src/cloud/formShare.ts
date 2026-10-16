@@ -1,6 +1,7 @@
 import { linkAccess, type CloudGrant } from '@/cloud/accessMap'
 import type { CloudProviderId } from '@/cloud/types'
 import type { ColumnHeader } from '@/types/excel'
+import type { ColumnStyle } from '@/utils/columnStyle'
 
 export const FORM_SHEET = '_ezxl_form'
 
@@ -15,6 +16,7 @@ export interface SharedFormColumn {
   pattern?: string
   options?: string[]
   formula?: string
+  style?: ColumnStyle
 }
 
 export interface SharedForm {
@@ -46,6 +48,7 @@ export function formSnapshot(
         pattern: header.pattern,
         options: header.options?.length ? header.options : undefined,
         formula: header.formula,
+        style: header.style,
       })),
   }
 }

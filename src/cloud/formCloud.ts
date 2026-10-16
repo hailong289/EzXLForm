@@ -49,8 +49,8 @@ export function rowLine(form: SharedForm, row: RowData): CellValue[] {
 }
 
 async function googleSheetTabs(fileId: string, token: string) {
-  const meta = await authedJson<{ sheets?: { properties?: { title?: string; sheetId?: number } }[] }>(
-    `${sheetApi(fileId)}?fields=sheets.properties(title,sheetId)`,
+  const meta = await authedJson<{ sheets?: { properties?: { title?: string; sheetId?: number; gridProperties?: { rowCount?: number } } }[] }>(
+    `${sheetApi(fileId)}?fields=sheets.properties(title,sheetId,gridProperties.rowCount)`,
     token,
   )
   return meta.sheets ?? []
@@ -98,11 +98,33 @@ async function writeGoogleSheetForm(file: CloudFileRef, form: SharedForm): Promi
 
 async function appendGoogleSheet(file: CloudFileRef, form: SharedForm, row: RowData): Promise<void> {
   const token = await googleAccessToken()
-  await authedJson(
+  const tabs = await googleSheetTabs(file.id, token)
+  const tab = tabs.find((item) => item.properties?.title === form.sheet)
+  const sheetId = tab?.properties?.sheetId
+  const gridRows = tab?.properties?.gridProperties?.rowCount ?? 0
+  const postAppend = () => authedJson(
     `${sheetApi(file.id)}/values/${encodeURIComponent(`${quotedSheet(form.sheet)}!A1`)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
     token,
     { method: 'POST', body: JSON.stringify({ values: [rowLine(form, row)] }) },
   )
+  try {
+    await postAppend()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
+    if (sheetId == null || !/grid|exceeds/i.test(message)) throw error
+    await authedJson(`${sheetApi(file.id)}:batchUpdate`, token, {
+      method: 'POST',
+      body: JSON.stringify({
+        requests: [{
+          updateSheetProperties: {
+            properties: { sheetId, gridProperties: { rowCount: Math.max(gridRows, 1) + 1 } },
+            fields: 'gridProperties.rowCount',
+          },
+        }],
+      }),
+    })
+    await postAppend()
+  }
 }
 
 async function peersGoogleSheet(file: CloudFileRef, form: SharedForm, index: number): Promise<string[]> {
@@ -229,16 +251,7 @@ async function appendXlsx(file: CloudFileRef, provider: CloudProviderId, form: S
   const workbook = await loadXlsx(file, provider)
   const sheet = workbook.getWorksheet(form.sheet)
   if (!sheet) throw new Error('Không thấy sheet dữ liệu')
-  let last = form.headerRow + 1
-  sheet.eachRow({ includeEmpty: false }, (_row, rowNumber) => {
-    if (rowNumber > last) last = rowNumber
-  })
-  const line = rowLine(form, row)
-  const target = sheet.getRow(last + 1)
-  line.forEach((value, index) => {
-    target.getCell(index + 1).value = value == null ? '' : (value as string | number | boolean)
-  })
-  target.commit()
+  sheet.addRow(rowLine(form, row).map((value) => (value == null || value === '' ? null : value)))
   await saveXlsx(file, provider, workbook)
 }
 
@@ -283,22 +296,13 @@ export async function uniquePeers(provider: CloudProviderId, file: CloudFileRef,
   return peersXlsx(await loadXlsx(file, provider), form, index)
 }
 
-export async function preserveFormSheet(provider: CloudProviderId, file: CloudFileRef, blob: Blob): Promise<Blob> {
-  if (sheetBacked(provider, file)) return blob
+export async function sharedFormJson(provider: CloudProviderId, file: CloudFileRef): Promise<string | null> {
+  if (sheetBacked(provider, file)) return null
   try {
-    const current = await loadXlsx(file, provider)
-    const source = current.getWorksheet(FORM_SHEET)
-    if (!source) return blob
-    const next = new ExcelJS.Workbook()
-    await next.xlsx.load(await blob.arrayBuffer())
-    if (next.getWorksheet(FORM_SHEET)) return blob
-    const copy = next.addWorksheet(FORM_SHEET)
-    copy.getCell('A1').value = cellText(source.getCell('A1').value)
-    copy.state = 'hidden'
-    const buffer = await next.xlsx.writeBuffer()
-    return new Blob([buffer], { type: XLSX_MIME })
+    const form = await readSharedForm(provider, file)
+    return form ? JSON.stringify(form) : null
   } catch {
-    return blob
+    return null
   }
 }
 

@@ -148,6 +148,25 @@ export async function pushGoogleRows(
 ): Promise<string> {
   const token = await googleAccessToken()
   if (writes.length > 0) {
+    const tabs = await loadTabs(file.id, token)
+    for (const row of writes) {
+      const tab = tabs.find((item) => item.properties?.title === row.sheetName)
+      const sheetId = tab?.properties?.sheetId
+      if (!tab || sheetId == null) continue
+      const gridRows = tab.properties?.gridProperties?.rowCount ?? 0
+      const gridCols = tab.properties?.gridProperties?.columnCount ?? 0
+      const needRows = row.excelRow
+      const needCols = row.startCol + Math.max(row.values.length, 1)
+      if (gridRows >= needRows && gridCols >= needCols) continue
+      await resizeGrid(file.id, sheetId, Math.max(gridRows, needRows), Math.max(gridCols, needCols), token)
+      tab.properties = {
+        ...tab.properties,
+        gridProperties: {
+          rowCount: Math.max(gridRows, needRows),
+          columnCount: Math.max(gridCols, needCols),
+        },
+      }
+    }
     await authedJson(`${sheetUrl(file.id)}/values:batchUpdate`, token, {
       method: 'POST',
       body: JSON.stringify({

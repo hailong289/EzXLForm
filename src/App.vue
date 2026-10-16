@@ -26,6 +26,7 @@ import { useSqliteStorage } from '@/composables/useSqliteStorage'
 import CloudBrowserModal from '@/components/modals/CloudBrowserModal.vue'
 import { useCloudBindings } from '@/cloud/bindings'
 import { googleConfigured, microsoftConfigured } from '@/cloud/config'
+import { cloudBaseline } from '@/cloud/baseline'
 import { pendingCloudDelta, publishLocalWorkbook, rememberCloudBaseline, remoteRevision, writeCloudWorkbook, writesCellValues } from '@/cloud/sync'
 import type { CloudBinding, CloudProviderId } from '@/cloud/types'
 import type { CloudOpenResult } from '@/cloud/sync'
@@ -130,6 +131,25 @@ watch(
   { deep: true },
 )
 
+function sameRevision(left: string, right: string): boolean {
+  const norm = (value: string) => value.trim().replace(/^W\//, '').replaceAll('"', '')
+  return norm(left) === norm(right)
+}
+
+function addedRows(sessionId: string, workbook: WorkbookData): boolean {
+  const previous = cloudBaseline(sessionId)
+  if (!previous || previous.size === 0) return false
+  let grew = false
+  for (const sheet of workbook.sheets) {
+    const before = previous.get(sheet.name)
+    if (!before) return false
+    const next = sheet.rows.length + 1
+    if (next < before.length) return false
+    if (next > before.length) grew = true
+  }
+  return grew
+}
+
 async function saveCloudOnce(manual: boolean): Promise<'ok' | 'fail' | 'skip'> {
   const sessionId = activeSessionId.value
   const binding = bindingFor(sessionId)
@@ -139,8 +159,9 @@ async function saveCloudOnce(manual: boolean): Promise<'ok' | 'fail' | 'skip'> {
   const remote = await remoteRevision(binding)
   if (activeSessionId.value !== sessionId) return 'skip'
   const cellPatch = pendingCloudDelta(sessionId, workbook).kind === 'rows'
-  if (!cellPatch && remote && binding.revision && remote !== binding.revision) {
-    if (!manual) throw new Error('File trên cloud đã đổi kể từ lần đồng bộ')
+  const appending = addedRows(sessionId, workbook)
+  const drifted = !cellPatch && !appending && !!remote && !!binding.revision && !sameRevision(remote, binding.revision)
+  if (drifted && manual) {
     const overwrite = window.confirm('File trên cloud đã đổi kể từ lần đồng bộ. Ghi đè bản trên cloud?')
     if (!overwrite) return 'skip'
   }

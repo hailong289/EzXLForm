@@ -14,7 +14,7 @@ import {
   createMicrosoftXlsx,
 } from '@/cloud/microsoftFiles'
 import { pullMicrosoftWorkbook, pushMicrosoftRows, pushMicrosoftWorkbook } from '@/cloud/microsoftWorkbook'
-import { preserveFormSheet } from '@/cloud/formCloud'
+import { sharedFormJson } from '@/cloud/formCloud'
 import { buildXlsxBlob } from '@/cloud/session'
 import { GOOGLE_SHEET_MIME, type CloudBinding, type CloudFileRef, type CloudOpenMode, type CloudProviderId } from '@/cloud/types'
 import { cloudBaseline, setCloudBaseline } from '@/cloud/baseline'
@@ -83,6 +83,7 @@ export async function writeCloudWorkbook(
   if (writesCellValues(binding)) {
     assertLiveWorkbook(workbook)
     const delta = sessionId ? diffLiveWorkbook(workbook, cloudBaseline(sessionId)) : { kind: 'full' as const }
+    const written = snapshotSheetMatrices(workbook)
     if (delta.kind === 'rows' && delta.writes.length === 0 && delta.clears.length === 0) {
       return binding.revision
     }
@@ -92,12 +93,12 @@ export async function writeCloudWorkbook(
           binding.provider === 'google'
             ? await pushGoogleRows(binding.file, delta.writes, delta.clears)
             : await pushMicrosoftRows(binding.file, delta.writes, delta.clears)
-        if (sessionId) setCloudBaseline(sessionId, snapshotSheetMatrices(workbook))
+        if (sessionId) setCloudBaseline(sessionId, written)
         return revision
       } catch (err) {
         const message = err instanceof Error ? err.message : ''
         const canRewrite =
-          /grid|tried writing|exceeds grid|Unable to parse range/i.test(message) ||
+          /grid|tried writing|exceeds grid|Unable to parse range|outside the|InvalidArgument/i.test(message) ||
           (binding.provider === 'microsoft' && message.includes('chưa có trên cloud'))
         if (!canRewrite) throw err
       }
@@ -106,12 +107,12 @@ export async function writeCloudWorkbook(
       binding.provider === 'google'
         ? await pushGoogleSheet(binding.file, workbook)
         : await pushMicrosoftWorkbook(binding.file, workbook)
-    if (sessionId) setCloudBaseline(sessionId, snapshotSheetMatrices(workbook))
+    if (sessionId) setCloudBaseline(sessionId, written)
     return revision
   }
   onProgress?.('Đang dựng file .xlsx...')
-  const built = await buildXlsxBlob(workbook, onProgress)
-  const blob = await preserveFormSheet(binding.provider, binding.file, built)
+  const formJson = await sharedFormJson(binding.provider, binding.file)
+  const blob = await buildXlsxBlob(workbook, onProgress, formJson)
   if (binding.provider === 'google') return uploadGoogleXlsx(binding.file.id, blob)
   return uploadMicrosoftXlsx(binding.file, blob)
 }

@@ -140,7 +140,6 @@ export function diffLiveWorkbook(current: WorkbookData, previous: Map<string, Li
     const beforeWidth = before[0]?.length ?? 0
     if (width !== beforeWidth) return { kind: 'full' }
     const shared = Math.min(matrix.length, before.length)
-    let changed = 0
     for (let index = 0; index < shared; index += 1) {
       const nextRow = matrix[index]
       const prevRow = before[index]
@@ -154,7 +153,6 @@ export function diffLiveWorkbook(current: WorkbookData, previous: Map<string, Li
         last = column
       }
       if (first < 0) continue
-      changed += 1
       writes.push({
         sheetName: name,
         excelRow: index + 1,
@@ -163,7 +161,6 @@ export function diffLiveWorkbook(current: WorkbookData, previous: Map<string, Li
       })
     }
     for (let index = before.length; index < matrix.length; index += 1) {
-      changed += 1
       writes.push({ sheetName: name, excelRow: index + 1, startCol: 0, values: matrix[index] })
     }
     if (matrix.length < before.length && width > 0) {
@@ -174,8 +171,6 @@ export function diffLiveWorkbook(current: WorkbookData, previous: Map<string, Li
         cols: width,
       })
     }
-    const total = Math.max(matrix.length, 1)
-    if (changed > 20 && changed * 2 >= total) return { kind: 'full' }
   }
   return { kind: 'rows', writes, clears }
 }

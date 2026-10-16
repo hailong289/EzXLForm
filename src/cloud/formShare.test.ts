@@ -11,12 +11,13 @@ function grant(patch: Partial<CloudGrant>): CloudGrant {
 describe('shared form', () => {
   it('keeps only the preset columns', () => {
     const headers = [
-      { key: 'name', label: 'Tên', originalIndex: 0, required: true },
+      { key: 'name', label: 'Tên', originalIndex: 0, required: true, style: { bold: true, fill: '#fff3bf' } },
       { key: 'note', label: 'Ghi chú', originalIndex: 2 },
     ] as ColumnHeader[]
     const form = formSnapshot('Khách', 0, headers, ['name'])
     assert.equal(form.columns.length, 1)
     assert.equal(form.columns[0]?.index, 0)
+    assert.equal(parseFormBook(JSON.stringify(form))?.columns[0]?.style?.bold, true)
     assert.equal(parseFormBook(JSON.stringify(form))?.sheet, 'Khách')
   })
 

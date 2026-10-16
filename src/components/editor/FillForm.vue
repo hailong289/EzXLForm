@@ -6,6 +6,7 @@ import type { CloudProviderId } from '@/cloud/types'
 import { useLocale } from '@/composables/useLocale'
 import type { ColumnHeader, RowData } from '@/types/excel'
 import { coerceRowData } from '@/utils/cellValue'
+import { columnPaint } from '@/utils/columnStyle'
 import { applyFormulas } from '@/utils/columnRules'
 
 const props = defineProps<{ provider: CloudProviderId; fileId: string }>()
@@ -34,7 +35,30 @@ function asHeader(column: SharedFormColumn): ColumnHeader {
     pattern: column.pattern,
     options: column.options,
     formula: column.formula,
+    style: column.style,
   }
+}
+
+function labelStyle(header: ColumnHeader) {
+  return columnPaint(header.style).text
+}
+
+function fieldStyle(header: ColumnHeader) {
+  const paint = columnPaint(header.style)
+  const style: Record<string, string> = { ...paint.box, ...paint.text }
+  const border = header.style?.border
+  if (!border) return style
+  const color = header.style?.borderColor || '#000000'
+  style.boxShadow = 'none'
+  style.outline = 'none'
+  if (border === 'bottom') {
+    style.border = 'none'
+    style.borderBottom = `1px solid ${color}`
+    style.borderRadius = '0'
+  } else {
+    style.border = `1px solid ${color}`
+  }
+  return style
 }
 
 async function load() {
@@ -104,9 +128,9 @@ async function submit() {
       <p v-if="sent" class="text-sm text-success">{{ t('fill.sent') }}</p>
       <form v-if="form && !busy" class="flex flex-col gap-3" @submit.prevent="submit">
         <label v-for="header in headers" :key="header.key" class="flex flex-col gap-1 text-sm">
-          <span>{{ header.label }}</span>
-          <input v-if="header.formula" class="input input-bordered input-sm" :value="String(preview[header.key] ?? '')" disabled />
-          <select v-else-if="header.options?.length" v-model="values[header.key]" class="select select-bordered select-sm">
+          <span :style="labelStyle(header)">{{ header.label }}</span>
+          <input v-if="header.formula" class="input input-bordered input-sm" :style="fieldStyle(header)" :value="String(preview[header.key] ?? '')" disabled />
+          <select v-else-if="header.options?.length" v-model="values[header.key]" class="select select-bordered select-sm" :style="fieldStyle(header)">
             <option value="">{{ t('fill.choose') }}</option>
             <option v-for="option in header.options" :key="option" :value="option">{{ option }}</option>
           </select>
@@ -114,6 +138,7 @@ async function submit() {
             v-else
             v-model="values[header.key]"
             class="input input-bordered input-sm"
+            :style="fieldStyle(header)"
             :placeholder="header.dataType === 'date' ? header.dateFormat : ''"
           />
           <span v-if="errors[header.key]" class="text-xs text-error">{{ errors[header.key] }}</span>
