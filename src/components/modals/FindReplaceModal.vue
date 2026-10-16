@@ -9,6 +9,7 @@ import { useProgressTaskStore } from '@/stores/progressTaskStore'
 import { scanLogicalRows } from '@/composables/rowPageStore'
 import { rowMatchesFind } from '@/utils/rowFilter'
 import { formatDateValue } from '@/utils/dateFormat'
+import { formatNumber } from '@/utils/numberFormat'
 import type { ColumnHeader, FindReplaceOptions, RowData } from '@/types/excel'
 
 const props = defineProps<{
@@ -108,7 +109,7 @@ function previewValue(value: RowData[string], header: ColumnHeader): string {
   if (header.dataType === 'boolean') return value ? 'Có' : 'Không'
   if (header.dataType === 'number') {
     const numeric = Number(value)
-    return Number.isNaN(numeric) ? String(value) : numeric.toLocaleString('vi-VN')
+    return Number.isNaN(numeric) ? String(value) : formatNumber(numeric, header.numFmt)
   }
   return String(value)
 }

@@ -30,6 +30,17 @@ export interface ColumnHeader {
   dateFormat?: string
   /** Mã hiện số kiểu Excel, ví dụ #,##0.00 hoặc 0%. Chỉ dùng khi dataType là number */
   numFmt?: string
+  style?: import('@/utils/columnStyle').ColumnStyle
+  /** Giữ giá trị khi tạo dòng trống */
+  pinned?: boolean
+  required?: boolean
+  unique?: boolean
+  /** Regex kiểm tra chuỗi đã nhập */
+  pattern?: string
+  /** Danh sách chọn. Rỗng thì vẫn gõ tự do */
+  options?: string[]
+  /** Biểu thức theo key cột, ví dụ qty * price */
+  formula?: string
   visible?: boolean
 }
 

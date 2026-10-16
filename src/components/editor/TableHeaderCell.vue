@@ -39,6 +39,7 @@ const emit = defineEmits<{
   'sort-desc': [key: string]
   'set-type': [key: string, type: 'text' | 'number' | 'date' | 'boolean']
   'format-cells': [key: string]
+  'column-rules': [key: string]
   'drag-start': [key: string]
   'drag-over': [key: string]
   drop: [key: string]
@@ -188,6 +189,9 @@ function onGripDragStart(event: DragEvent) {
           <li class="menu-title py-0.5 text-[10px] uppercase opacity-60">Kiểu dữ liệu</li>
           <li>
             <a class="py-1" @click="emit('format-cells', header.key)">{{ t('format.menu') }}</a>
+          </li>
+          <li>
+            <a class="py-1" @click="emit('column-rules', header.key)">{{ t('rules.menu') }}</a>
           </li>
           <li>
             <a

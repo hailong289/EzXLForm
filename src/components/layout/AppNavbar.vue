@@ -24,6 +24,7 @@ import {
   ChevronDown,
   Files,
   CircleHelp,
+  LifeBuoy,
   X,
   HardDrive,
   Cloud,
@@ -37,7 +38,10 @@ import { useCloudBindings } from '@/cloud/bindings'
 import { googleConfigured, microsoftConfigured } from '@/cloud/config'
 import ThemeDropdown from '@/components/common/ThemeDropdown.vue'
 import LanguageDropdown from '@/components/common/LanguageDropdown.vue'
+import ActivityMenu from '@/components/layout/ActivityMenu.vue'
+import { useEnterNext } from '@/composables/useEnterNext'
 import HelpGuide from '@/components/modals/HelpGuide.vue'
+import SupportRequestDialog from '@/components/modals/SupportRequestDialog.vue'
 import { useLocale } from '@/composables/useLocale'
 import { menuWidthPx } from '@/utils/workspaceFrame'
 import { startPageTour } from '@/composables/usePageTour'
@@ -83,8 +87,10 @@ const cloudBinding = computed(() => bindingFor(activeSessionId.value))
 /** Hidden file input element */
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const showHelp = ref(false)
+const showSupport = ref(false)
 const mobileOpen = ref(false)
 const { t, locale } = useLocale()
+const { enterNext, setEnterNext } = useEnterNext()
 const viewportWidth = ref(window.innerWidth)
 const menuWidth = computed(() => `${menuWidthPx(viewportWidth.value, 320)}px`)
 
@@ -326,6 +332,10 @@ function onFileSelected(event: Event) {
           <List class="h-4 w-4" /> {{ t('nav.tasks') }}
           <span v-if="progressStore.tasks.length" class="badge badge-sm badge-primary">{{ progressStore.tasks.length }}</span>
         </button>
+        <ActivityMenu block class="mt-2" />
+        <button type="button" class="btn btn-ghost mt-2 h-12 min-h-12 w-full justify-start gap-2 border border-base-300" @click="showSupport = true; closeMenus()">
+          <LifeBuoy class="h-4 w-4" /> {{ t('nav.support') }}
+        </button>
         <button type="button" class="btn btn-ghost mt-2 h-12 min-h-12 w-full justify-start gap-2 border border-base-300" @click="openTour()">
           <CircleHelp class="h-4 w-4" /> {{ t('nav.help.f1') }}
         </button>
@@ -333,6 +343,7 @@ function onFileSelected(event: Event) {
         <div class="mt-5 flex items-center gap-2 border-t border-base-300 pt-4">
           <LanguageDropdown />
           <ThemeDropdown />
+          <button type="button" class="btn btn-ghost btn-xs" :class="enterNext ? 'btn-active' : ''" :title="t('entry.enter.next')" :aria-pressed="enterNext" @click="setEnterNext(!enterNext)">Enter</button>
         </div>
       </div>
     </div>
@@ -615,6 +626,8 @@ function onFileSelected(event: Event) {
         <Search class="w-3.5 h-3.5" />
       </button>
 
+      <ActivityMenu />
+
       <div class="dropdown dropdown-bottom dropdown-end">
         <button
           tabindex="0"
@@ -700,6 +713,15 @@ function onFileSelected(event: Event) {
 
       <button
         type="button"
+        class="btn btn-ghost btn-xs gap-1"
+        :title="t('nav.support')"
+        @click="showSupport = true"
+      >
+        <LifeBuoy class="w-3.5 h-3.5" />
+        <span class="hidden md:inline">{{ t('nav.support') }}</span>
+      </button>
+      <button
+        type="button"
         class="btn btn-ghost btn-xs"
         :title="t('nav.help.f1')"
         @click="openTour"
@@ -711,8 +733,10 @@ function onFileSelected(event: Event) {
       <!-- Tách thành component riêng để dễ mở rộng -->
       <LanguageDropdown />
       <ThemeDropdown />
+      <button type="button" class="btn btn-ghost btn-xs" :class="enterNext ? 'btn-active' : ''" :title="t('entry.enter.next')" :aria-pressed="enterNext" @click="setEnterNext(!enterNext)">Enter</button>
     </div>
     </div>
   </nav>
   <HelpGuide v-model="showHelp" @tour="openTour" />
+  <SupportRequestDialog v-model="showSupport" />
 </template>

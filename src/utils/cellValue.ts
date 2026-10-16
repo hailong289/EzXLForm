@@ -1,5 +1,6 @@
 import type { CellValue, ColumnHeader, RowData } from '@/types/excel'
 import { DEFAULT_DATE_FORMAT, parseDateToIso } from '@/utils/dateFormat'
+import { peerValues, ruleError } from '@/utils/columnRules'
 
 export interface CoerceResult {
   value: CellValue
@@ -40,13 +41,15 @@ export function coerceCellValue(
 export function coerceRowData(
   formData: Record<string, string>,
   headers: ColumnHeader[],
+  peers?: { rows: RowData[]; skipIndex?: number | null },
 ): { row: RowData; errors: Record<string, string> } {
   const row: RowData = {}
   const errors: Record<string, string> = {}
   for (const h of headers) {
     const { value, error } = coerceCellValue(formData[h.key] ?? '', h.dataType, h.dateFormat)
     row[h.key] = value
-    if (error) errors[h.key] = error
+    const broken = error ?? ruleError(h, value, peerValues(peers?.rows ?? [], h.key, peers?.skipIndex))
+    if (broken) errors[h.key] = broken
   }
   return { row, errors }
 }

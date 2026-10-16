@@ -6,6 +6,8 @@ import PreviewSheetTabs from './PreviewSheetTabs.vue'
 import { columnIndexToLetter } from '@/types/excel'
 import type { CellValue, RowData } from '@/types/excel'
 import { formatDateValue } from '@/utils/dateFormat'
+import { formatNumber } from '@/utils/numberFormat'
+import { columnPaint } from '@/utils/columnStyle'
 import { readLogicalRange } from '@/composables/rowPageStore'
 import { cellToDisplayString } from '@/utils/sheetGrid'
 import { useVirtualRows } from '@/composables/useVirtualRows'
@@ -165,7 +167,7 @@ function cellText(rowIndex: number, columnIndex: number, value: CellValue): stri
   if (value === null || value === undefined || value === '') return ''
   if (header?.dataType === 'number') {
     const num = Number(value)
-    return Number.isNaN(num) ? cellToDisplayString(value) : num.toLocaleString('vi-VN')
+    return Number.isNaN(num) ? cellToDisplayString(value) : formatNumber(num, header.numFmt)
   }
   if (header?.dataType === 'boolean') return value ? 'TRUE' : 'FALSE'
   if (header?.dataType === 'date') return formatDateValue(value, header.dateFormat)
@@ -174,6 +176,14 @@ function cellText(rowIndex: number, columnIndex: number, value: CellValue): stri
 
 function isHeaderRow(rowIndex: number): boolean {
   return rowIndex === (currentPreviewSheet.value?.headerRowIndex ?? 0)
+}
+
+function previewCellStyle(rowIndex: number, columnIndex: number) {
+  if (isHeaderRow(rowIndex)) return { backgroundColor: '#217346', color: '#ffffff' }
+  const sheet = currentPreviewSheet.value
+  if (!sheet || rowIndex <= sheet.headerRowIndex) return undefined
+  const paint = columnPaint(sheet.headers[columnIndex]?.style)
+  return { ...paint.box, ...paint.text }
 }
 </script>
 
@@ -237,7 +247,7 @@ function isHeaderRow(rowIndex: number): boolean {
               :key="colIdx"
               class="excel-cell"
               :class="isHeaderRow(item.index) ? 'font-bold' : ''"
-              :style="isHeaderRow(item.index) ? { backgroundColor: '#217346', color: '#ffffff' } : undefined"
+              :style="previewCellStyle(item.index, colIdx)"
             >
               {{ cellText(item.index, colIdx, value) }}
             </td>

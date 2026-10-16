@@ -25,9 +25,12 @@ import FormPresetDialog from './FormPresetDialog.vue'
 import TableHeaderCell from './TableHeaderCell.vue'
 import TableRowCell from './TableRowCell.vue'
 import FormatCellsDialog from './FormatCellsDialog.vue'
+import ColumnRulesDialog from './ColumnRulesDialog.vue'
 import BatchActionBar from './BatchActionBar.vue'
 import type { AdvancedFilterRule, CellValue, ColumnHeader, RowData } from '@/types/excel'
-import type { ColumnFormat } from '@/utils/numberFormat'
+import { formatNumber, type ColumnFormat } from '@/utils/numberFormat'
+import { applyFormulas, peerValues, ruleError } from '@/utils/columnRules'
+import type { ColumnStyle } from '@/utils/columnStyle'
 import { ensureSourceGrid, headerChoiceIndexes, previewGridLine, sheetRowCount } from '@/utils/sheetGrid'
 import { DATE_FORMATS, DEFAULT_DATE_FORMAT } from '@/utils/dateFormat'
 import { activeFilterRules, operatorsFor, operatorNeedsValue, rowMatchesFilters } from '@/utils/rowFilter'
@@ -199,6 +202,26 @@ async function onRemovePreset(id: string) {
   await formPresets.deletePreset(id)
 }
 const allRows = computed(() => activeSheet.value?.rows ?? [])
+// shortcut: sheet chia trang chỉ gợi ý và kiểm tra trùng trên dòng đang nằm trong bộ nhớ
+const textSuggestions = computed(() => {
+  const out: Record<string, string[]> = {}
+  for (const header of headers.value) {
+    if ((header.dataType && header.dataType !== 'text') || header.options?.length || header.formula) continue
+    const seen = new Set<string>()
+    const list: string[] = []
+    for (const row of allRows.value) {
+      const raw = row[header.key]
+      if (raw == null || raw === '') continue
+      const value = String(raw)
+      if (seen.has(value)) continue
+      seen.add(value)
+      list.push(value)
+      if (list.length >= 50) break
+    }
+    if (list.length) out[header.key] = list
+  }
+  return out
+})
 const rowTotal = computed(() => (activeSheet.value ? sheetRowCount(activeSheet.value) : 0))
 const visibleRows = ref<Record<number, RowData>>({})
 const pendingEdits = new Map<number, RowData>()
@@ -775,6 +798,8 @@ function selectRowForEdit(rowIndex: number) {
 
 function startCellEdit(rowIndex: number, columnKey: string) {
   if (!allowInlineCellEdit(tier.value)) return
+  const header = headers.value.find((item) => item.key === columnKey)
+  if (header?.style?.locked || header?.formula) return
   selectedRowIndex.value = rowIndex
   selectionStore.setEditingCell(rowIndex, columnKey)
 }
@@ -789,7 +814,14 @@ async function saveCell(rowIndex: number, columnKey: string, value: CellValue) {
   if (!activeSheet.value) return
   if (activeSheet.value.paged && rowAt(rowIndex) == null) return
   if (sameCell(rowAt(rowIndex)?.[columnKey] ?? null, value)) return
-  const next = { ...(rowAt(rowIndex) ?? {}), [columnKey]: value }
+  const header = headers.value.find((item) => item.key === columnKey)
+  const peers = peerValues(allRows.value, columnKey, rowIndex)
+  const broken = header ? ruleError(header, value, peers) : null
+  if (broken) {
+    appConfigStore.addToast({ type: 'warning', message: broken })
+    return
+  }
+  const next = applyFormulas({ ...(rowAt(rowIndex) ?? {}), [columnKey]: value }, headers.value)
   await handleUpdateRow(rowIndex, next)
 }
 
@@ -797,6 +829,14 @@ async function saveCell(rowIndex: number, columnKey: string, value: CellValue) {
 function emptyRow(): RowData {
   const row: RowData = {}
   for (const header of headers.value) row[header.key] = header.dataType === 'boolean' ? false : null
+  return row
+}
+
+function blankRow(source: RowData): RowData {
+  const row = emptyRow()
+  for (const header of headers.value) {
+    if (header.pinned) row[header.key] = source[header.key] ?? row[header.key]
+  }
   return row
 }
 
@@ -821,7 +861,7 @@ async function handleCreateRow(
   const sheetId = activeSheet.value.id
   const afterSelected = placement === 'after' && anchor !== null
   const insertAt = afterSelected ? anchor + 1 : undefined
-  const row = kind === 'blank' ? emptyRow() : { ...newRowData }
+  const row = applyFormulas(kind === 'blank' ? blankRow(newRowData) : { ...newRowData }, headers.value)
 
   await workbookStore.addRow(sheetId, row, insertAt)
   if (insertAt !== undefined) rowMarks.noteRowInserted(sheetId, insertAt)
@@ -926,11 +966,12 @@ async function handleUpdateRow(rowIndex: number, updatedData: RowData) {
   if (!activeSheet.value || rowIndex < 0 || rowIndex >= rowTotal.value) return
   const sheetId = activeSheet.value.id
   if (activeSheet.value.paged) {
-    schedulePagedEdit(sheetId, rowIndex, updatedData)
+    schedulePagedEdit(sheetId, rowIndex, applyFormulas(updatedData, headers.value))
     return
   }
-  scheduleMemoryEdit(sheetId, rowIndex, updatedData)
-  await workbookStore.replaceRow(sheetId, rowIndex, updatedData)
+  const next = applyFormulas(updatedData, headers.value)
+  scheduleMemoryEdit(sheetId, rowIndex, next)
+  await workbookStore.replaceRow(sheetId, rowIndex, next)
 }
 
 async function handleDeleteRow(rowIndex: number) {
@@ -1185,7 +1226,8 @@ function columnSum(header: ColumnHeader): string {
   if (header.dataType === 'date' || header.dataType === 'boolean') return ''
   if (activeSheet.value?.paged) {
     const stat = activeSheet.value.columnSums?.[header.key]
-    if (!stat || stat.count === 0) return header.dataType === 'number' ? '0' : ''
+    if (!stat || stat.count === 0) return header.dataType === 'number' ? formatNumber(0, header.numFmt) : ''
+    if (header.dataType === 'number') return formatNumber(stat.sum, header.numFmt)
     return Number.isInteger(stat.sum)
       ? stat.sum.toLocaleString()
       : stat.sum.toLocaleString(undefined, { maximumFractionDigits: 2 })
@@ -1200,7 +1242,8 @@ function columnSum(header: ColumnHeader): string {
     sum += numeric
     count += 1
   }
-  if (count === 0) return header.dataType === 'number' ? '0' : ''
+  if (count === 0) return header.dataType === 'number' ? formatNumber(0, header.numFmt) : ''
+  if (header.dataType === 'number') return formatNumber(sum, header.numFmt)
   return Number.isInteger(sum)
     ? sum.toLocaleString()
     : sum.toLocaleString(undefined, { maximumFractionDigits: 2 })
@@ -1312,18 +1355,45 @@ function onHeaderSetType(key: string, type: ColumnHeader['dataType']) {
 
 const showColumnEditor = ref(false)
 const formatHeader = ref<ColumnHeader | null>(null)
+const rulesHeader = ref<ColumnHeader | null>(null)
 const newColumnLabel = ref('')
 
 function openFormatCells(key: string) {
   formatHeader.value = headers.value.find((item) => item.key === key) ?? null
 }
 
-function applyFormat(format: ColumnFormat) {
+function openColumnRules(key: string) {
+  rulesHeader.value = headers.value.find((item) => item.key === key) ?? null
+}
+
+function togglePin(key: string) {
+  const header = headers.value.find((item) => item.key === key)
+  if (!header) return
+  header.pinned = header.pinned ? undefined : true
+  workbookStore.isDirty = true
+  workbookStore.dataRevision += 1
+}
+
+function applyColumnRules(rules: { required: boolean; unique: boolean; pattern: string; options: string[]; formula: string }) {
+  const header = rulesHeader.value
+  if (!header) return
+  header.required = rules.required || undefined
+  header.unique = rules.unique || undefined
+  header.pattern = rules.pattern || undefined
+  header.options = rules.options.length ? rules.options : undefined
+  header.formula = rules.formula || undefined
+  workbookStore.isDirty = true
+  workbookStore.dataRevision += 1
+  rulesHeader.value = null
+}
+
+function applyFormat(format: ColumnFormat & { style?: ColumnStyle }) {
   const header = formatHeader.value
   if (!header) return
   header.dataType = format.dataType
   header.dateFormat = format.dateFormat
   header.numFmt = format.numFmt
+  header.style = format.style
   workbookStore.isDirty = true
   workbookStore.dataRevision += 1
   formatHeader.value = null
@@ -1374,6 +1444,8 @@ function addNamedColumn() {
         :selected-preset-id="formPresets.selectedPresetId.value"
         :shown-header-keys="shownHeaderKeys"
         :preset-empty="formPresets.presetEmpty.value"
+        :rows="allRows"
+        :suggestions="textSuggestions"
         :row-is-new="
           selectedRowIndex !== null &&
           !!activeSheet &&
@@ -1392,6 +1464,7 @@ function addNamedColumn() {
         @jump-to-row="selectRowForEdit"
         @set-date-format="onHeaderSetDateFormat"
         @format-column="openFormatCells"
+        @toggle-pin="togglePin"
         @hide="hideForm"
         @show-table="showTableList = true"
       />
@@ -1649,6 +1722,7 @@ function addNamedColumn() {
                 @sort-desc="(k) => onHeaderSort(k, 'desc')"
                 @set-type="onHeaderSetType"
                 @format-cells="openFormatCells"
+                @column-rules="openColumnRules"
                 @drag-start="onHeaderDragStart"
                 @drag-over="onHeaderDragOver"
                 @drop="onHeaderDrop"
@@ -1739,6 +1813,7 @@ function addNamedColumn() {
                 :data-type="h.dataType"
                 :date-format="h.dateFormat"
                 :num-fmt="h.numFmt"
+                :column-style="h.style"
                 :is-editing="
                   selectionStore.editingCell?.rowIndex === logicalAt(item.index) &&
                   selectionStore.editingCell?.columnKey === h.key
@@ -1891,6 +1966,12 @@ function addNamedColumn() {
       :header="formatHeader"
       @close="formatHeader = null"
       @apply="applyFormat"
+    />
+    <ColumnRulesDialog
+      v-if="rulesHeader"
+      :header="rulesHeader"
+      @close="rulesHeader = null"
+      @apply="applyColumnRules"
     />
   </div>
 </template>

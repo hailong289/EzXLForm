@@ -205,10 +205,17 @@ const pendingCloud = ref<CloudBinding | null>(null)
 const isDraggingOver = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const showIntro = ref(true)
+const TOUR_SEEN_KEY = 'excel_editor_tour_seen'
 let guideStarted = false
 
 function openGuide() {
   if (guideStarted || (showIntro.value && !workbookStore.workbook)) return
+  try {
+    if (localStorage.getItem(TOUR_SEEN_KEY)) return
+    localStorage.setItem(TOUR_SEEN_KEY, '1')
+  } catch {
+    /* private mode: guideStarted still limits this load */
+  }
   guideStarted = true
   nextTick(() => startPageTour(t))
 }

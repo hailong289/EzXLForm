@@ -6,19 +6,47 @@
 
 import { computed, reactive } from 'vue'
 import type { ComputedRef } from 'vue'
-import type { HistoryEntry } from '@/types/excel'
+import { useWorkbookStore } from '@/stores/workbookStore'
+import type { ColumnHeader, HistoryEntry } from '@/types/excel'
+import { activityLines } from '@/utils/activityDetail'
+
+interface ActivityItem {
+  id: string
+  at: number
+  kind: 'do' | 'undo' | 'redo'
+  text: string
+  details: string[]
+}
 
 interface HistoryState {
   history: HistoryEntry[]
   currentIndex: number
   maxHistory: number
+  activity: ActivityItem[]
 }
 
 const state = reactive<HistoryState>({
   history: [],
   currentIndex: -1,
   maxHistory: 100,
+  activity: [],
 })
+
+function headersFor(sheetId: string): ColumnHeader[] {
+  const workbook = useWorkbookStore().workbook
+  return workbook?.sheets.find((sheet) => sheet.id === sheetId)?.headers ?? []
+}
+
+function noteActivity(kind: 'do' | 'undo' | 'redo', entry: HistoryEntry): void {
+  state.activity.unshift({
+    id: `act_${Date.now()}_${state.activity.length}`,
+    at: Date.now(),
+    kind,
+    text: entry.description,
+    details: activityLines(entry, headersFor(entry.sheetId)),
+  })
+  if (state.activity.length > 80) state.activity.pop()
+}
 
 function generateId(): string {
   return `hist_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
@@ -77,12 +105,14 @@ export function useHistory() {
     }
 
     state.currentIndex = state.history.length - 1
+    noteActivity('do', newEntry)
   }
 
   function undo(): HistoryEntry | null {
     if (!canUndo.value) return null
     const entry = state.history[state.currentIndex]
     state.currentIndex -= 1
+    noteActivity('undo', entry)
     return entry
   }
 
@@ -90,6 +120,7 @@ export function useHistory() {
     if (!canRedo.value) return null
     state.currentIndex += 1
     const entry = state.history[state.currentIndex]
+    noteActivity('redo', entry)
     return entry
   }
 
@@ -106,6 +137,8 @@ export function useHistory() {
     return redoDescription.value
   }
 
+  const activity = computed(() => state.activity)
+
   return {
     canUndo,
     canRedo,
@@ -115,6 +148,7 @@ export function useHistory() {
     redoStackSize,
     undoDescription,
     redoDescription,
+    activity,
     push,
     undo,
     redo,

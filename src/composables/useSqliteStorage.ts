@@ -6,6 +6,7 @@ import { saveAs } from 'file-saver'
 import type { WorkbookData, SheetData, ColumnHeader, RowData } from '@/types/excel'
 import { presetsForLiveSheets, type FormPreset } from '@/utils/formPresets'
 import { sheetRowCount } from '@/utils/sheetGrid'
+import { columnFormatPayload, readColumnFormat } from '@/utils/columnStyle'
 import {
   applyStoredRowMarks,
   collectRowMarksForSave,
@@ -195,6 +196,11 @@ export function useSqliteStorage() {
         visible_keys_json TEXT NOT NULL
       );
     `)
+    try {
+      db.run(`ALTER TABLE columns ADD COLUMN format_json TEXT`)
+    } catch {
+      // Cột đã có trên phiên đã lưu
+    }
   }
 
   function readRowMarksFromDatabase(db: Database): StoredRowMark[] {
@@ -262,6 +268,11 @@ export function useSqliteStorage() {
   }
 
   function workbookFromDatabase(db: Database): WorkbookData | null {
+    try {
+      db.run(`ALTER TABLE columns ADD COLUMN format_json TEXT`)
+    } catch {
+      // Cột đã có
+    }
     const wbRes = db.exec(`SELECT file_name, file_size, active_sheet_id, updated_at FROM workbook LIMIT 1`)
     if (!wbRes || wbRes.length === 0 || wbRes[0].values.length === 0) {
       return null
@@ -300,17 +311,27 @@ export function useSqliteStorage() {
           }
         }
 
-      const stmtCols = db.prepare(`SELECT col_key, label, data_type FROM columns WHERE sheet_id = ? ORDER BY sort_order ASC`)
+      const stmtCols = db.prepare(`SELECT col_key, label, data_type, format_json FROM columns WHERE sheet_id = ? ORDER BY sort_order ASC`)
       stmtCols.bind([sheetId])
       const headers: ColumnHeader[] = []
       let colIdx = 0
       while (stmtCols.step()) {
         const colRow = stmtCols.get()
+        const stored = readColumnFormat(colRow[3] == null ? '' : String(colRow[3]))
         headers.push({
           key: String(colRow[0]),
           label: String(colRow[1]),
           dataType: (colRow[2] as ColumnHeader['dataType']) || 'text',
           originalIndex: colIdx++,
+          dateFormat: stored.dateFormat,
+          numFmt: stored.numFmt,
+          style: stored.style,
+          pinned: stored.pinned,
+          required: stored.required,
+          unique: stored.unique,
+          pattern: stored.pattern,
+          options: stored.options,
+          formula: stored.formula,
         })
       }
       stmtCols.free()
@@ -443,7 +464,7 @@ export function useSqliteStorage() {
 
         sheet.headers.forEach((col, colIdx) => {
           db.run(
-            `INSERT INTO columns (id, sheet_id, col_key, label, data_type, sort_order) VALUES (?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO columns (id, sheet_id, col_key, label, data_type, sort_order, format_json) VALUES (?, ?, ?, ?, ?, ?, ?)`,
             [
               `${sheet.id}_${col.key}`,
               sheet.id,
@@ -451,6 +472,7 @@ export function useSqliteStorage() {
               col.label,
               col.dataType || 'text',
               colIdx,
+              columnFormatPayload(col),
             ],
           )
         })
@@ -596,27 +618,23 @@ export function useSqliteStorage() {
   /**
    * Tải file SQLite .db về máy tính cho người dùng
    */
-  async function downloadSqliteDatabase(fileName = 'excel_session.sqlite') {
+  async function sqliteSnapshot(): Promise<Blob | null> {
     const id = activeSessionId.value
     if (!currentDb && id) {
       const binaryData = await getBinaryFromIndexedDB(sessionKey(id))
-      if (binaryData) {
-        const blob = new Blob([binaryData], { type: 'application/x-sqlite3' })
-        saveAs(blob, fileName)
-        return
-      }
+      if (binaryData) return new Blob([binaryData], { type: 'application/x-sqlite3' })
     }
     if (!currentDb) {
       const binaryData = await getBinaryFromIndexedDB(DB_KEY)
-      if (binaryData) {
-        const blob = new Blob([binaryData], { type: 'application/x-sqlite3' })
-        saveAs(blob, fileName)
-      }
-      return
+      if (binaryData) return new Blob([binaryData], { type: 'application/x-sqlite3' })
+      return null
     }
-    const binary = currentDb.export()
-    const blob = new Blob([binary], { type: 'application/x-sqlite3' })
-    saveAs(blob, fileName)
+    return new Blob([currentDb.export()], { type: 'application/x-sqlite3' })
+  }
+
+  async function downloadSqliteDatabase(fileName = 'excel_session.sqlite') {
+    const blob = await sqliteSnapshot()
+    if (blob) saveAs(blob, fileName)
   }
 
   /**
@@ -646,6 +664,7 @@ export function useSqliteStorage() {
     deleteFileSession,
     adoptSessionForFile,
     setActiveSessionId,
+    sqliteSnapshot,
     downloadSqliteDatabase,
     clearSqliteSession,
   }

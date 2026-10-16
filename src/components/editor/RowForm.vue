@@ -25,16 +25,20 @@ import {
   X,
   Maximize2,
   Ellipsis,
+  Pin,
 } from 'lucide-vue-next'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import type { ColumnHeader, RowData } from '@/types/excel'
 import { DATE_FORMATS, DEFAULT_DATE_FORMAT, formatDateValue, parseDateToIso } from '@/utils/dateFormat'
 import { coerceCellValue, coerceRowData } from '@/utils/cellValue'
+import { applyFormulas, formulaError } from '@/utils/columnRules'
+import { useEnterNext } from '@/composables/useEnterNext'
 import { useImageQuickLook } from '@/composables/imageQuickLook'
 import { useLocale } from '@/composables/useLocale'
 import { imageLabel, imageSources } from '@/utils/imageSource'
 
 const { t } = useLocale()
+const { enterNext } = useEnterNext()
 const quickLook = useImageQuickLook()
 
 function fieldImages(key: string): string[] {
@@ -59,6 +63,8 @@ const props = defineProps<{
   selectedPresetId: string
   shownHeaderKeys: string[] | null
   presetEmpty: boolean
+  rows?: RowData[]
+  suggestions?: Record<string, string[]>
 }>()
 
 const emit = defineEmits<{
@@ -72,6 +78,7 @@ const emit = defineEmits<{
   'jump-to-row': [index: number]
   'edit-columns': []
   'format-column': [key: string]
+  'toggle-pin': [key: string]
   'set-date-format': [key: string, format: string]
   'select-preset': [presetId: string]
   'manage-presets': []
@@ -182,7 +189,7 @@ watch(
 function clearForm() {
   const data: Record<string, string> = {}
   props.headers.forEach((h) => {
-    data[h.key] = ''
+    data[h.key] = h.pinned ? (formData.value[h.key] ?? '') : ''
   })
   formData.value = data
   originalData.value = {}
@@ -190,8 +197,25 @@ function clearForm() {
   touchedFields.value = new Set()
 }
 
+function formPeers() {
+  return { rows: props.rows ?? [], skipIndex: props.selectedRowIndex }
+}
+
 function parseFormData(): RowData {
-  return coerceRowData(formData.value, props.headers).row
+  return applyFormulas(coerceRowData(formData.value, props.headers, formPeers()).row, props.headers)
+}
+
+function formulaProblem(header: ColumnHeader): string | null {
+  if (!header.formula) return null
+  return formulaError(header, coerceRowData(formData.value, props.headers, formPeers()).row)
+}
+
+function formulaShown(header: ColumnHeader): string {
+  const broken = formulaProblem(header)
+  if (broken) return ''
+  const row = applyFormulas(coerceRowData(formData.value, props.headers, formPeers()).row, props.headers)
+  const value = row[header.key]
+  return value == null ? '' : String(value)
 }
 
 function headerOf(key: string): ColumnHeader | undefined {
@@ -199,11 +223,18 @@ function headerOf(key: string): ColumnHeader | undefined {
 }
 
 function refreshFieldError(key: string): void {
-  const h = headerOf(key)
-  const { error } = coerceCellValue(formData.value[key] ?? '', h?.dataType, h?.dateFormat)
+  const { errors } = coerceRowData(formData.value, props.headers, formPeers())
+  for (const header of props.headers) {
+    if (!header.formula) continue
+    const broken = formulaError(header, coerceRowData(formData.value, props.headers, formPeers()).row)
+    if (broken) errors[header.key] = broken
+  }
   const next = { ...fieldErrors.value }
-  if (error) next[key] = error
-  else delete next[key]
+  const keys = new Set([key, ...props.headers.filter((header) => header.formula).map((header) => header.key)])
+  for (const item of keys) {
+    if (errors[item]) next[item] = errors[item]
+    else delete next[item]
+  }
   fieldErrors.value = next
 }
 
@@ -284,13 +315,17 @@ function onFieldInput(key: string, raw: string) {
 
 function handleCreate(placement: 'after' | 'end' = 'end', kind: 'copy' | 'blank' = 'copy') {
   if (kind === 'copy' && props.selectedRowIndex !== null && props.selectedRow == null) return
-  if (kind === 'copy') {
-    const { errors } = coerceRowData(formData.value, props.headers)
-    if (Object.keys(errors).length > 0) {
-      fieldErrors.value = errors
-      touchedFields.value = new Set(Object.keys(errors))
-      return
+  const drafted = coerceRowData(formData.value, props.headers, formPeers())
+  if (kind !== 'blank') {
+    for (const header of props.headers) {
+      const broken = formulaError(header, drafted.row)
+      if (broken) drafted.errors[header.key] = broken
     }
+  }
+  if (Object.keys(drafted.errors).length > 0) {
+    fieldErrors.value = drafted.errors
+    touchedFields.value = new Set(Object.keys(drafted.errors))
+    return
   }
   const where = placement === 'after' && props.selectedRowIndex !== null ? 'after' : 'end'
   emit('create', parseFormData(), where, props.selectedRowIndex, kind)
@@ -316,7 +351,7 @@ function fieldControls(): HTMLElement[] {
   if (!host) return []
   return [...host.querySelectorAll<HTMLElement>('.field-body')]
     .map((body) => body.querySelector<HTMLElement>('textarea, input:not([type="date"])'))
-    .filter((control): control is HTMLElement => control != null)
+    .filter((control): control is HTMLElement => control != null && !control.hasAttribute('readonly'))
 }
 
 function caretAtBoundary(control: HTMLElement, direction: 'left' | 'right' | 'up' | 'down'): boolean {
@@ -369,6 +404,23 @@ function onFormFocusOut(event: FocusEvent) {
   if (next instanceof Node && root instanceof Node && root.contains(next)) return
   formFocused.value = false
   syncFormFromSelection(false)
+}
+
+function focusStep(current: EventTarget | null, delta: number) {
+  if (!(current instanceof HTMLElement)) return
+  const controls = fieldControls()
+  const index = controls.indexOf(current)
+  const target = controls[index + delta]
+  target?.focus()
+}
+
+function onFieldEnter(event: KeyboardEvent) {
+  if (!enterNext.value || event.ctrlKey || event.metaKey || event.altKey) {
+    if (!event.shiftKey && !isEditMode.value) handleCreate()
+    return
+  }
+  event.preventDefault()
+  focusStep(event.target, event.shiftKey ? -1 : 1)
 }
 
 function onFormKeydown(event: KeyboardEvent) {
@@ -547,10 +599,9 @@ function closeModal() {
   modalDraft.value = ''
 }
 
-function saveModal() {
+function onModalInput() {
   if (!modalKey.value) return
   onFieldInput(modalKey.value, modalDraft.value)
-  closeModal()
 }
 
 watch(
@@ -600,8 +651,8 @@ onUnmounted(() => {
     <!-- ── Header Panel Gọn Gàng ───────────────────────────────────────────── -->
     <div
       data-tour="form"
-      class="flex items-center border-b border-base-300 bg-base-200/90"
-      :class="props.phone ? 'gap-2 px-2 py-1.5' : 'flex-wrap justify-between gap-3 p-3'"
+      class="flex items-center gap-2 border-b border-base-300 bg-base-200/90"
+      :class="props.phone ? 'px-2 py-1.5' : 'px-3 py-2'"
     >
       <div class="flex min-w-0 flex-1 items-center gap-2">
         <div
@@ -625,11 +676,11 @@ onUnmounted(() => {
               <CheckCircle2 v-if="syncUi === 'done'" class="h-3.5 w-3.5" />
               <RefreshCw v-else class="h-3.5 w-3.5 animate-spin" />
             </span>
-            <span v-else-if="hasRows && !props.phone" class="badge badge-xs badge-primary px-2 py-0.5 font-semibold">
+            <span v-else-if="hasRows && !props.phone" class="badge badge-xs badge-primary shrink-0 px-2 py-0.5 font-semibold">
               {{ t('form.new.mode') }}
             </span>
           </div>
-          <span v-if="!props.phone" class="mt-0.5 block text-[11px] opacity-60">
+          <span v-if="!props.phone" class="mt-0.5 block truncate text-[11px] opacity-60">
             {{
               !hasRows
                 ? t('form.click.add.row.start.entering')
@@ -641,20 +692,18 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- Quick Reset / New Row Button -->
-      <div class="flex max-w-full flex-wrap items-center gap-1.5">
+      <div class="flex shrink-0 items-center gap-0.5">
         <button
           v-if="props.tableHidden && !props.phone"
-          class="btn btn-xs btn-outline btn-primary gap-1"
+          class="btn btn-xs btn-ghost gap-1"
           :title="t('form.show.table')"
           @click="emit('show-table')"
         >
-          <PanelRightOpen class="w-3.5 h-3.5" /> {{ t('form.show.table') }}
+          <PanelRightOpen class="h-3.5 w-3.5" />
         </button>
-        <div class="dropdown dropdown-end">
-          <button type="button" tabindex="0" data-tour="form-actions" class="btn btn-xs btn-outline gap-1" :title="t('form.actions')" :aria-label="t('form.actions')">
+        <div v-if="props.phone" class="dropdown dropdown-end">
+          <button type="button" tabindex="0" data-tour="form-actions" class="btn btn-xs btn-ghost btn-square" :title="t('form.actions')" :aria-label="t('form.actions')">
             <Ellipsis class="h-3.5 w-3.5" />
-            <span v-if="!props.phone">{{ t('form.actions') }}</span>
           </button>
           <ul tabindex="0" class="dropdown-content menu z-50 mt-1 w-52 rounded-box border border-base-300 bg-base-100 p-1 shadow-lg">
             <li>
@@ -693,6 +742,30 @@ onUnmounted(() => {
               </button>
             </li>
           </ul>
+        </div>
+        <div v-else data-tour="form-actions" class="flex items-center gap-0.5">
+          <button type="button" class="btn btn-ghost btn-xs btn-square" :title="t('common.form.types')" :aria-label="t('common.form.types')" @click="emit('manage-presets')">
+            <FilePlus class="h-3.5 w-3.5" />
+          </button>
+          <button v-if="!props.tableHidden" type="button" class="btn btn-ghost btn-xs btn-square" :title="t('form.hide.form')" :aria-label="t('form.hide.form')" @click="emit('hide')">
+            <PanelLeftClose class="h-3.5 w-3.5" />
+          </button>
+          <button type="button" class="btn btn-ghost btn-xs btn-square" :title="t('form.columns')" :aria-label="t('form.columns')" @click="emit('edit-columns')">
+            <Columns3 class="h-3.5 w-3.5" />
+          </button>
+          <span v-if="hasRows" class="mx-0.5 h-4 w-px bg-base-300"></span>
+          <button v-if="isEditMode" type="button" class="btn btn-ghost btn-xs btn-square" :disabled="!props.selectedRow" :title="t('form.copy.below')" :aria-label="t('form.copy.below')" @click="handleCreate('after', 'copy')">
+            <Copy class="h-3.5 w-3.5" />
+          </button>
+          <button v-if="hasRows" type="button" class="btn btn-ghost btn-xs btn-square" :title="t('form.add.end')" :aria-label="t('form.add.end')" @click="handleCreate('end', 'blank')">
+            <Plus class="h-3.5 w-3.5" />
+          </button>
+          <button v-if="hasRows" type="button" class="btn btn-ghost btn-xs btn-square" :title="t('form.clear')" :aria-label="t('form.clear')" @click="handleNewRowMode">
+            <RotateCcw class="h-3.5 w-3.5" />
+          </button>
+          <button v-if="isEditMode" type="button" class="btn btn-ghost btn-xs btn-square text-error" :title="t('form.delete.row')" :aria-label="t('form.delete.row')" @click="handleDeleteClick">
+            <Trash2 class="h-3.5 w-3.5" />
+          </button>
         </div>
       </div>
     </div>
@@ -890,6 +963,16 @@ onUnmounted(() => {
             <div class="flex items-center gap-1 flex-shrink-0">
               <button
                 type="button"
+                class="btn btn-ghost btn-xs h-6 min-h-0 px-1"
+                :class="h.pinned ? 'text-primary' : 'text-base-content/40'"
+                :title="h.pinned ? t('entry.unpin') : t('entry.pin')"
+                :aria-pressed="!!h.pinned"
+                @click="emit('toggle-pin', h.key)"
+              >
+                <Pin class="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
                 class="badge badge-ghost badge-xs font-mono text-[10px] uppercase opacity-50"
                 :title="t('format.menu')"
                 @click="emit('format-column', h.key)"
@@ -919,9 +1002,32 @@ onUnmounted(() => {
             </div>
           </div>
 
+          <p v-if="h.style?.locked" class="text-[11px] text-warning">{{ t('format.protect.locked') }}</p>
           <div class="field-body mt-1.5 min-h-0 min-w-0 flex-1">
+            <template v-if="h.formula">
+              <input
+                readonly
+                class="input input-bordered w-full rounded-lg bg-base-200 text-xs"
+                :value="formulaShown(h)"
+                :aria-label="h.label"
+              />
+              <p v-if="formulaProblem(h)" class="mt-1 text-[11px] text-error">{{ formulaProblem(h) }}</p>
+            </template>
+            <select
+              v-else-if="h.options?.length"
+              :id="`field-${h.key}-options`"
+              class="select select-bordered w-full rounded-lg bg-base-100 text-xs"
+              :value="formData[h.key]"
+              :disabled="!!h.style?.locked"
+              :aria-label="h.label"
+              @change="onFieldInput(h.key, ($event.target as HTMLSelectElement).value)"
+              @keydown.enter.prevent="onFieldEnter"
+            >
+              <option value=""></option>
+              <option v-for="item in h.options" :key="item" :value="item">{{ item }}</option>
+            </select>
             <div
-              v-if="(h.dataType === 'text' || !h.dataType) && fieldImages(h.key).length"
+              v-else-if="(h.dataType === 'text' || !h.dataType) && fieldImages(h.key).length"
               class="flex w-full min-w-0 flex-col gap-1.5"
             >
               <div
@@ -946,6 +1052,8 @@ onUnmounted(() => {
                 :value="formData[h.key]"
                 class="form-text-input textarea textarea-bordered w-full resize-none overflow-y-auto rounded-lg bg-base-100 text-xs scrollbar-thin !min-h-0 !py-1.5 !leading-snug"
                 :aria-label="h.label"
+                :disabled="!!h.style?.locked"
+                :list="props.suggestions?.[h.key]?.length ? `suggest-${h.key}` : undefined"
                 @input="onTextAreaInput(h.key, $event)"
                 @blur="markTouched(h.key)"
               />
@@ -960,6 +1068,8 @@ onUnmounted(() => {
               :aria-label="h.label"
               :aria-invalid="!!visibleFieldError(h.key)"
               :placeholder="t('form.enter.label', { label: h.label })"
+              :disabled="!!h.style?.locked"
+              :list="props.suggestions?.[h.key]?.length ? `suggest-${h.key}` : undefined"
               @input="onTextAreaInput(h.key, $event)"
               @blur="markTouched(h.key)"
             />
@@ -974,9 +1084,10 @@ onUnmounted(() => {
                 :aria-invalid="!!visibleFieldError(h.key)"
                 :placeholder="datePattern(h)"
                 :title="t('form.date.pattern.format', { pattern: datePattern(h) })"
+                :disabled="!!h.style?.locked"
                 @input="onDateInput(h, $event)"
                 @blur="onDateBlur(h)"
-                @keydown.enter="!isEditMode && handleCreate()"
+                @keydown.enter="onFieldEnter"
               />
               <button
                 type="button"
@@ -1006,9 +1117,10 @@ onUnmounted(() => {
               :aria-invalid="!!visibleFieldError(h.key)"
               :placeholder="t('form.enter.label', { label: h.label })"
               :title="t('form.enter.number.use.dot.decimal')"
+              :disabled="!!h.style?.locked"
               @input="onFieldInput(h.key, ($event.target as HTMLInputElement).value)"
               @blur="markTouched(h.key)"
-              @keydown.enter="!isEditMode && handleCreate()"
+              @keydown.enter="onFieldEnter"
             />
 
             <label
@@ -1020,6 +1132,7 @@ onUnmounted(() => {
                 class="checkbox checkbox-sm checkbox-primary"
                 :checked="formData[h.key] === 'true' || formData[h.key] === '1'"
                 :aria-label="h.label"
+                :disabled="!!h.style?.locked"
                 @change="
                   onFieldInput(h.key, ($event.target as HTMLInputElement).checked ? 'true' : 'false')
                 "
@@ -1028,6 +1141,9 @@ onUnmounted(() => {
                 {{ formData[h.key] === 'true' || formData[h.key] === '1' ? t('form.true.yes') : t('form.false.no') }}
               </span>
             </label>
+            <datalist v-if="!h.formula && !h.options?.length && props.suggestions?.[h.key]?.length" :id="`suggest-${h.key}`">
+              <option v-for="item in props.suggestions[h.key]" :key="item" :value="item" />
+            </datalist>
           </div>
 
           <p
@@ -1145,20 +1261,12 @@ onUnmounted(() => {
             autofocus
             class="textarea textarea-bordered w-full text-sm bg-base-100 rounded-lg resize-y scrollbar-thin leading-relaxed"
             :placeholder="t('form.enter.label', { label: modalHeader?.label ?? '' })"
+            @input="onModalInput"
           />
           <div class="flex items-center justify-between text-[11px] text-base-content/50">
-            <span>{{ t('form.changes.write.straight.into.matching') }}</span>
+            <span>{{ t('form.edit.autosave') }}</span>
             <span class="font-semibold text-base-content/70">{{ t('form.n.characters', { n: modalDraft.length }) }}</span>
           </div>
-        </div>
-
-        <!-- Modal Footer -->
-        <div class="px-5 py-3 border-t border-base-300 bg-base-200/60 flex items-center justify-end gap-2 flex-shrink-0">
-          <button type="button" class="btn btn-sm btn-ghost" @click="closeModal">{{ t('common.cancel') }}</button>
-          <button type="button" class="btn btn-sm btn-primary gap-1.5" @click="saveModal">
-            <CheckCircle2 class="w-3.5 h-3.5" />
-            {{ t('form.save.changes') }}
-          </button>
         </div>
       </div>
       <div class="modal-backdrop bg-black/40" @click="closeModal" />

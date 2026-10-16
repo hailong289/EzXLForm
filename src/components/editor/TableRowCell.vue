@@ -5,6 +5,7 @@ import { useImageQuickLook } from '@/composables/imageQuickLook'
 import { useLocale } from '@/composables/useLocale'
 import { DEFAULT_DATE_FORMAT, formatDateValue, parseDateToIso } from '@/utils/dateFormat'
 import { formatNumber } from '@/utils/numberFormat'
+import { columnPaint, type ColumnStyle } from '@/utils/columnStyle'
 import { imageLabel, imageSources } from '@/utils/imageSource'
 
 const props = defineProps<{
@@ -14,6 +15,7 @@ const props = defineProps<{
   dataType?: ColumnHeader['dataType']
   dateFormat?: string
   numFmt?: string
+  columnStyle?: ColumnStyle
   isEditing: boolean
 }>()
 
@@ -29,6 +31,7 @@ const failedThumbs = ref<Set<string>>(new Set())
 const { t } = useLocale()
 const quickLook = useImageQuickLook()
 const previews = computed(() => imageSources(props.value))
+const paint = computed(() => columnPaint(props.columnStyle))
 
 watch(previews, () => {
   failedThumbs.value = new Set()
@@ -109,7 +112,8 @@ function formatDisplay(val: CellValue): string {
 <template>
   <td
     class="p-0 h-8 max-w-[150px] border-r border-b border-base-300 relative text-xs"
-    :class="{ 'cell-editing': props.isEditing }"
+    :class="{ 'cell-editing': props.isEditing, 'h-auto min-h-8': props.columnStyle?.wrap }"
+    :style="paint.box"
     @dblclick.stop="emit('start-edit')"
   >
     <div v-if="props.isEditing" class="h-full w-full flex items-center p-0.5">
@@ -161,11 +165,13 @@ function formatDisplay(val: CellValue): string {
     <!-- Display Value -->
     <div
       v-else
-      class="px-2 py-1 h-full flex items-center overflow-hidden text-ellipsis whitespace-nowrap cursor-text"
+      class="px-2 py-1 h-full flex items-center overflow-hidden text-ellipsis cursor-text"
       :class="{
-        'text-right justify-end font-mono': props.dataType === 'number',
-        'text-center justify-center font-bold text-primary': props.dataType === 'boolean',
+        'whitespace-nowrap': !props.columnStyle?.wrap,
+        'text-right justify-end font-mono': props.dataType === 'number' && !props.columnStyle?.align,
+        'text-center justify-center font-bold text-primary': props.dataType === 'boolean' && !props.columnStyle?.align,
       }"
+      :style="paint.text"
       :title="props.value != null && props.value !== '' ? String(props.value) : 'Bấm đúp để sửa trong ô'"
     >
       <span class="truncate">{{ formatDisplay(props.value) }}</span>
