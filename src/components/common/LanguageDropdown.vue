@@ -2,6 +2,8 @@
 import { Check, Languages } from 'lucide-vue-next'
 import { useLocale, type AppLocale } from '@/composables/useLocale'
 
+defineProps<{ iconOnly?: boolean }>()
+
 const { locale, localeLabel, setLocale, t } = useLocale()
 
 function pick(next: AppLocale) {
@@ -14,7 +16,7 @@ function pick(next: AppLocale) {
   <div class="dropdown dropdown-bottom dropdown-end">
     <button type="button" tabindex="0" class="btn btn-ghost btn-xs gap-1" :title="t('locale.language')">
       <Languages class="w-3.5 h-3.5" />
-      <span class="hidden lg:inline text-xs font-normal">{{ localeLabel }}</span>
+      <span v-if="!iconOnly" class="hidden lg:inline text-xs font-normal">{{ localeLabel }}</span>
     </button>
     <ul
       tabindex="0"

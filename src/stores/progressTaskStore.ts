@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import type { FindReplaceOptions } from '@/types/excel'
 
 export type ProgressTaskStatus = 'queued' | 'running' | 'paused' | 'done' | 'cancelled'
-export type ProgressTaskKind = 'import' | 'replace' | 'filter'
+export type ProgressTaskKind = 'import' | 'replace' | 'filter' | 'cloud'
 
 export interface ProgressTask {
   id: string
@@ -25,9 +25,9 @@ function readStoredTasks(): ProgressTask[] {
     if (!Array.isArray(parsed)) return []
     return parsed.flatMap((task) => {
       const kind: ProgressTaskKind =
-        task.kind === 'import' || task.kind === 'filter' || task.kind === 'replace' ? task.kind : 'replace'
+        task.kind === 'import' || task.kind === 'filter' || task.kind === 'replace' || task.kind === 'cloud' ? task.kind : 'replace'
       const unfinished = task.status === 'running' || task.status === 'paused' || task.status === 'queued'
-      if ((kind === 'import' || kind === 'filter') && unfinished) {
+      if ((kind === 'import' || kind === 'filter' || kind === 'cloud') && unfinished) {
         return [{ ...task, kind, status: 'cancelled' as const }]
       }
       if (kind === 'replace' && unfinished) {
@@ -46,15 +46,15 @@ function writeStoredTasks(tasks: ProgressTask[]) {
 }
 
 export function canPauseTask(task: ProgressTask): boolean {
-  return task.kind !== 'import' && task.status === 'running'
+  return task.kind !== 'import' && task.kind !== 'cloud' && task.status === 'running'
 }
 
 export function canResumeTask(task: ProgressTask): boolean {
-  return task.kind !== 'import' && task.status === 'paused'
+  return task.kind !== 'import' && task.kind !== 'cloud' && task.status === 'paused'
 }
 
 export function canRemoveTask(task: ProgressTask): boolean {
-  return !(task.kind === 'import' && (task.status === 'running' || task.status === 'queued'))
+  return !((task.kind === 'import' || task.kind === 'cloud') && (task.status === 'running' || task.status === 'queued'))
 }
 
 export function taskStatusLabel(status: ProgressTaskStatus): string {

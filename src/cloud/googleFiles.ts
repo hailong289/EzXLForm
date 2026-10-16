@@ -87,3 +87,19 @@ export async function uploadGoogleXlsx(fileId: string, blob: Blob): Promise<stri
   const data = (await response.json()) as { version?: string | number }
   return String(data.version ?? '')
 }
+
+export async function createGoogleXlsx(name: string, blob: Blob): Promise<CloudFileRef> {
+  const token = await googleAccessToken()
+  const fileName = name.toLowerCase().endsWith('.xlsx') ? name : `${name}.xlsx`
+  const body = new FormData()
+  body.append('metadata', new Blob([JSON.stringify({ name: fileName, mimeType: XLSX_MIME })], { type: 'application/json' }))
+  body.append('file', blob, fileName)
+  const response = await fetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,webViewLink',
+    { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body },
+  )
+  if (!response.ok) throw await apiError(response)
+  const data = (await response.json()) as DriveFile
+  if (!data.id) throw new Error('Không tạo được file trên Google Drive')
+  return { id: data.id, name: data.name || fileName, mime: data.mimeType || XLSX_MIME, webUrl: data.webViewLink }
+}

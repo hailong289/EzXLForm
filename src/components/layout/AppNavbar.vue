@@ -5,7 +5,7 @@
  * Bao gồm: Logo, thao tác file (Mở/Xuất), chuyển View Mode,
  * nút Undo/Redo, tìm kiếm, và ThemeDropdown.
  */
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   Upload,
   Download,
@@ -22,6 +22,9 @@ import {
   FileSpreadsheet,
   Menu,
   ChevronDown,
+  MoreHorizontal,
+  Shield,
+  Link2,
   Files,
   CircleHelp,
   LifeBuoy,
@@ -36,12 +39,18 @@ import { useHistory } from '@/composables/useHistory'
 import { useSqliteStorage } from '@/composables/useSqliteStorage'
 import { useCloudBindings } from '@/cloud/bindings'
 import { googleConfigured, microsoftConfigured } from '@/cloud/config'
+import { assertCloudEditor, signedInEmail } from '@/cloud/formCloud'
+import { canEditCloud } from '@/cloud/formShare'
+import { listCloudGrants } from '@/cloud/access'
+import CloudAccessDialog from '@/components/modals/CloudAccessDialog.vue'
+import ShareFormDialog from '@/components/modals/ShareFormDialog.vue'
 import ThemeDropdown from '@/components/common/ThemeDropdown.vue'
 import LanguageDropdown from '@/components/common/LanguageDropdown.vue'
 import ActivityMenu from '@/components/layout/ActivityMenu.vue'
 import { useEnterNext } from '@/composables/useEnterNext'
 import HelpGuide from '@/components/modals/HelpGuide.vue'
 import SupportRequestDialog from '@/components/modals/SupportRequestDialog.vue'
+import { useFormPresets } from '@/composables/useFormPresets'
 import { useLocale } from '@/composables/useLocale'
 import { menuWidthPx } from '@/utils/workspaceFrame'
 import { startPageTour } from '@/composables/usePageTour'
@@ -72,6 +81,8 @@ const emit = defineEmits<{
   'open-cloud': [provider: 'google' | 'microsoft']
   /** Ghi workbook hiện tại lên file cloud đang gắn */
   'save-cloud': []
+  /** Tạo file cloud mới từ một phiên đang lưu trên máy */
+  'publish-cloud': [sessionId: string, provider: 'google' | 'microsoft']
 }>()
 
 // ─── Stores & Composables ────────────────────────────────────────────────────
@@ -82,12 +93,55 @@ const { canUndo, canRedo, undoDescription, redoDescription } = useHistory()
 const { sessions, activeSessionId } = useSqliteStorage()
 const { bindingFor, cloudSyncing } = useCloudBindings()
 const cloudBinding = computed(() => bindingFor(activeSessionId.value))
+const cloudProviders = computed(() => {
+  const providers: Array<'google' | 'microsoft'> = []
+  if (googleConfigured()) providers.push('google')
+  if (microsoftConfigured()) providers.push('microsoft')
+  return providers
+})
+
+watch(cloudBinding, async (binding) => {
+  shareReady.value = false
+  if (!binding) return
+  try {
+    const email = await signedInEmail(binding.provider)
+    const grants = await listCloudGrants(binding)
+    shareReady.value = canEditCloud(grants, email)
+  } catch {
+    shareReady.value = false
+  }
+}, { immediate: true })
+
+async function openShare() {
+  const sheet = workbookStore.activeSheet
+  const binding = cloudBinding.value
+  if (!sheet || !binding) return
+  try {
+    await assertCloudEditor(binding.provider, binding.file)
+  } catch {
+    shareReady.value = false
+    return
+  }
+  await formPresets.loadForSheet(sheet.id, sheet.headers)
+  showShare.value = true
+  closeMenus()
+}
+
+function publishSession(sessionId: string, provider: 'google' | 'microsoft') {
+  emit('publish-cloud', sessionId, provider)
+  closeMenus()
+}
 
 // ─── Refs ────────────────────────────────────────────────────────────────────
 /** Hidden file input element */
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const showHelp = ref(false)
 const showSupport = ref(false)
+const showAccess = ref(false)
+const showShare = ref(false)
+const shareReady = ref(false)
+const formPresets = useFormPresets()
+const sharePresets = computed(() => formPresets.presets.value)
 const mobileOpen = ref(false)
 const { t, locale } = useLocale()
 const { enterNext, setEnterNext } = useEnterNext()
@@ -295,6 +349,27 @@ function onFileSelected(event: Event) {
             >
               <span class="truncate">{{ session.fileName }}</span>
             </button>
+            <template v-if="!bindingFor(session.id) && cloudProviders.length">
+              <button
+                v-if="cloudProviders.length === 1"
+                type="button"
+                class="btn btn-ghost h-12 min-h-12 px-3"
+                :title="t('nav.upload.cloud')"
+                :disabled="cloudSyncing"
+                @click.stop="publishSession(session.id, cloudProviders[0])"
+              >
+                <Cloud class="h-4 w-4" />
+              </button>
+              <div v-else class="dropdown dropdown-end">
+                <button type="button" tabindex="0" class="btn btn-ghost h-12 min-h-12 px-3" :title="t('nav.upload.cloud')" :disabled="cloudSyncing" @click.stop>
+                  <Cloud class="h-4 w-4" />
+                </button>
+                <ul tabindex="0" class="dropdown-content menu z-50 w-40 rounded-box border border-base-300 bg-base-100 p-1 shadow-lg">
+                  <li><button type="button" @click="publishSession(session.id, 'google')">Google Drive</button></li>
+                  <li><button type="button" @click="publishSession(session.id, 'microsoft')">OneDrive</button></li>
+                </ul>
+              </div>
+            </template>
             <button
               type="button"
               class="btn btn-ghost h-12 min-h-12 px-3"
@@ -328,6 +403,22 @@ function onFileSelected(event: Event) {
         >
           <Cloud class="h-4 w-4" /> {{ t('nav.sync') }}
         </button>
+        <button
+          v-if="shareReady"
+          type="button"
+          class="btn btn-ghost mt-2 h-12 min-h-12 w-full justify-start gap-2 border border-base-300"
+          @click="openShare"
+        >
+          <Link2 class="h-4 w-4" /> {{ t('share.title') }}
+        </button>
+        <button
+          v-if="cloudBinding"
+          type="button"
+          class="btn btn-ghost mt-2 h-12 min-h-12 w-full justify-start gap-2 border border-base-300"
+          @click="showAccess = true; closeMenus()"
+        >
+          {{ t('nav.access') }}
+        </button>
         <button type="button" class="btn btn-ghost mt-2 h-12 min-h-12 w-full justify-start gap-2 border border-base-300" @click="progressStore.openManager(); closeMenus()">
           <List class="h-4 w-4" /> {{ t('nav.tasks') }}
           <span v-if="progressStore.tasks.length" class="badge badge-sm badge-primary">{{ progressStore.tasks.length }}</span>
@@ -348,7 +439,7 @@ function onFileSelected(event: Event) {
       </div>
     </div>
 
-    <div class="navbar hidden h-12 min-h-12 items-center gap-2 overflow-x-auto px-4 lg:flex lg:overflow-x-visible">
+    <div class="navbar hidden h-12 min-h-12 items-center gap-1 overflow-x-auto px-2 lg:flex lg:overflow-x-visible">
 
     <!-- ── Left: Logo & File Actions ─────────────────────────────────────── -->
     <div class="flex items-center gap-2 flex-none">
@@ -360,7 +451,7 @@ function onFileSelected(event: Event) {
         @click="emit('go-home')"
       >
         <FileSpreadsheet class="w-4 h-4 text-primary" />
-        <span class="font-semibold text-sm hidden md:inline">Excel Editor</span>
+        <span class="text-sm font-semibold">Excel Editor</span>
       </button>
 
       <div class="dropdown dropdown-bottom">
@@ -371,8 +462,7 @@ function onFileSelected(event: Event) {
           :title="t('nav.open.file.computer.cloud')"
         >
           <Upload class="w-3.5 h-3.5" />
-          <span class="hidden md:inline">{{ t('nav.open') }}</span>
-          <ChevronDown class="w-3 h-3" />
+          <ChevronDown class="w-3 h-3 opacity-50" />
         </button>
         <ul
           tabindex="0"
@@ -407,7 +497,6 @@ function onFileSelected(event: Event) {
           :title="t('nav.files.kept.session')"
         >
           <Files class="w-3.5 h-3.5" />
-          <span class="hidden md:inline">{{ t('nav.sessions') }}</span>
           <span v-if="sessions.length" class="badge badge-xs badge-primary">{{ sessions.length }}</span>
           <ChevronDown class="w-3 h-3" />
         </button>
@@ -457,6 +546,27 @@ function onFileSelected(event: Event) {
                     </span>
                   </span>
                 </button>
+                <template v-if="!bindingFor(session.id) && cloudProviders.length">
+                  <button
+                    v-if="cloudProviders.length === 1"
+                    type="button"
+                    class="btn btn-ghost btn-xs btn-circle h-6 w-6 min-h-0"
+                    :title="t('nav.upload.cloud')"
+                    :disabled="cloudSyncing"
+                    @click.stop="publishSession(session.id, cloudProviders[0])"
+                  >
+                    <Cloud class="h-3 w-3" />
+                  </button>
+                  <div v-else class="dropdown dropdown-end">
+                    <button type="button" tabindex="0" class="btn btn-ghost btn-xs btn-circle h-6 w-6 min-h-0" :title="t('nav.upload.cloud')" :disabled="cloudSyncing" @click.stop>
+                      <Cloud class="h-3 w-3" />
+                    </button>
+                    <ul tabindex="0" class="dropdown-content menu z-50 w-40 rounded-box border border-base-300 bg-base-100 p-1 shadow-lg">
+                      <li><button type="button" @click="publishSession(session.id, 'google')">Google Drive</button></li>
+                      <li><button type="button" @click="publishSession(session.id, 'microsoft')">OneDrive</button></li>
+                    </ul>
+                  </div>
+                </template>
                 <button
                   type="button"
                   class="btn btn-ghost btn-xs btn-circle h-6 w-6 min-h-0 text-base-content/50 hover:text-error"
@@ -490,8 +600,7 @@ function onFileSelected(event: Event) {
           :title="t('nav.export.file')"
         >
           <Download class="w-3.5 h-3.5" />
-          <span class="hidden md:inline">{{ t('nav.export') }}</span>
-          <ChevronDown class="w-3 h-3" />
+          <ChevronDown class="w-3 h-3 opacity-50" />
         </button>
 
         <ul
@@ -527,18 +636,10 @@ function onFileSelected(event: Event) {
         >*</span>
 
         <span
-          class="hidden text-sm opacity-70 max-w-[140px] truncate md:inline"
+          class="max-w-[10rem] truncate text-sm opacity-70"
           :title="workbookStore.workbook.meta.fileName"
         >
           {{ workbookStore.workbook.meta.fileName }}
-        </span>
-
-        <!-- Badge SQLite Auto-Saved -->
-        <span
-          class="badge badge-xs badge-success badge-outline opacity-80 text-[10px] hidden xl:inline-flex py-1 px-1.5 font-mono"
-          :title="t('nav.session.saved.automatically.sqlite.kept')"
-        >
-          SQLite Saved
         </span>
         <span
           v-if="cloudBinding"
@@ -555,24 +656,24 @@ function onFileSelected(event: Event) {
       <div class="join bg-base-300/40 p-0.5 rounded-lg border border-base-300" data-tour="screen">
         <!-- Editor View -->
         <button
-          class="join-item btn btn-xs px-3 gap-1.5"
+          class="join-item btn btn-xs px-2"
           :class="appConfigStore.viewMode === 'editor' ? 'btn-primary font-bold shadow-xs' : 'btn-ghost'"
           :title="t('nav.edit.data.form')"
+          :aria-label="t('nav.edit')"
           @click="appConfigStore.setViewMode('editor')"
         >
           <Table2 class="w-3.5 h-3.5" />
-          <span class="hidden md:inline">{{ t('nav.edit') }}</span>
         </button>
 
         <!-- Preview View -->
         <button
-          class="join-item btn btn-xs px-3 gap-1.5"
+          class="join-item btn btn-xs px-2"
           :class="appConfigStore.viewMode === 'preview' ? 'btn-primary font-bold shadow-xs' : 'btn-ghost'"
           :title="t('nav.excel.spreadsheet.preview')"
+          :aria-label="t('nav.excel.preview')"
           @click="appConfigStore.setViewMode('preview')"
         >
           <Eye class="w-3.5 h-3.5" />
-          <span class="hidden md:inline">{{ t('nav.excel.preview') }}</span>
         </button>
       </div>
     </div>
@@ -613,7 +714,6 @@ function onFileSelected(event: Event) {
       >
         <span v-if="cloudSyncing" class="loading loading-spinner loading-xs" />
         <Cloud v-else class="w-3.5 h-3.5" />
-        <span class="hidden md:inline">{{ t('nav.sync') }}</span>
       </button>
 
       <!-- Nút Find & Replace -->
@@ -626,7 +726,7 @@ function onFileSelected(event: Event) {
         <Search class="w-3.5 h-3.5" />
       </button>
 
-      <ActivityMenu />
+      <ActivityMenu compact />
 
       <div class="dropdown dropdown-bottom dropdown-end">
         <button
@@ -635,11 +735,9 @@ function onFileSelected(event: Event) {
           :title="t('nav.tasks')"
         >
           <List class="w-3.5 h-3.5" />
-          <span class="hidden md:inline">{{ t('nav.tasks.menu') }}</span>
           <span v-if="progressStore.tasks.length" class="badge badge-xs badge-primary">
             {{ progressStore.tasks.length }}
           </span>
-          <ChevronDown class="w-3 h-3" />
         </button>
         <div
           tabindex="0"
@@ -708,35 +806,53 @@ function onFileSelected(event: Event) {
         </div>
       </div>
 
-      <!-- Divider -->
-      <div class="w-px h-5 bg-base-300 mx-1" />
-
-      <button
-        type="button"
-        class="btn btn-ghost btn-xs gap-1"
-        :title="t('nav.support')"
-        @click="showSupport = true"
-      >
-        <LifeBuoy class="w-3.5 h-3.5" />
-        <span class="hidden md:inline">{{ t('nav.support') }}</span>
-      </button>
-      <button
-        type="button"
-        class="btn btn-ghost btn-xs"
-        :title="t('nav.help.f1')"
-        @click="openTour"
-      >
-        <CircleHelp class="w-3.5 h-3.5" />
-      </button>
-
-      <!-- Theme Dropdown -->
-      <!-- Tách thành component riêng để dễ mở rộng -->
-      <LanguageDropdown />
+      <div class="dropdown dropdown-bottom dropdown-end">
+        <button type="button" tabindex="0" class="btn btn-ghost btn-xs btn-square" :title="t('nav.more')" :aria-label="t('nav.more')">
+          <MoreHorizontal class="w-3.5 h-3.5" />
+        </button>
+        <ul tabindex="0" class="dropdown-content menu z-50 mt-1 w-56 rounded-box border border-base-300 bg-base-100 p-1 shadow-lg">
+          <li v-if="shareReady">
+            <button type="button" @click="openShare">
+              <Link2 class="h-4 w-4" /> {{ t('share.title') }}
+            </button>
+          </li>
+          <li v-if="cloudBinding">
+            <button type="button" @click="showAccess = true; closeMenus()">
+              <Shield class="h-4 w-4" /> {{ t('nav.access') }}
+            </button>
+          </li>
+          <li>
+            <button type="button" @click="showSupport = true; closeMenus()">
+              <LifeBuoy class="h-4 w-4" /> {{ t('nav.support') }}
+            </button>
+          </li>
+          <li>
+            <button type="button" @click="openTour">
+              <CircleHelp class="h-4 w-4" /> {{ t('nav.help.f1') }}
+            </button>
+          </li>
+          <li>
+            <button type="button" :class="enterNext ? 'bg-base-200' : ''" :aria-pressed="enterNext" @click="setEnterNext(!enterNext)">
+              <span class="h-4 w-4 text-center text-xs font-semibold">↵</span>
+              {{ t('entry.enter.next') }}
+            </button>
+          </li>
+        </ul>
+      </div>
+      <LanguageDropdown icon-only />
       <ThemeDropdown />
-      <button type="button" class="btn btn-ghost btn-xs" :class="enterNext ? 'btn-active' : ''" :title="t('entry.enter.next')" :aria-pressed="enterNext" @click="setEnterNext(!enterNext)">Enter</button>
     </div>
     </div>
   </nav>
   <HelpGuide v-model="showHelp" @tour="openTour" />
   <SupportRequestDialog v-model="showSupport" />
+  <CloudAccessDialog v-model="showAccess" :binding="cloudBinding" />
+  <ShareFormDialog
+    v-model="showShare"
+    :binding="cloudBinding"
+    :presets="sharePresets"
+    :headers="workbookStore.activeSheet?.headers ?? []"
+    :sheet-name="workbookStore.activeSheet?.name ?? ''"
+    :header-row="workbookStore.activeSheet?.headerRowIndex ?? 0"
+  />
 </template>

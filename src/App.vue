@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import FillForm from '@/components/editor/FillForm.vue'
+import { parseFillHash } from '@/cloud/formShare'
 import { FileSpreadsheet, Sparkles, HardDrive, Cloud } from 'lucide-vue-next'
 import AppNavbar from '@/components/layout/AppNavbar.vue'
 import SheetTabsBar from '@/components/sheets/SheetTabsBar.vue'
@@ -24,13 +26,24 @@ import { useSqliteStorage } from '@/composables/useSqliteStorage'
 import CloudBrowserModal from '@/components/modals/CloudBrowserModal.vue'
 import { useCloudBindings } from '@/cloud/bindings'
 import { googleConfigured, microsoftConfigured } from '@/cloud/config'
-import { pendingCloudDelta, rememberCloudBaseline, remoteRevision, writeCloudWorkbook, writesCellValues } from '@/cloud/sync'
+import { pendingCloudDelta, publishLocalWorkbook, rememberCloudBaseline, remoteRevision, writeCloudWorkbook, writesCellValues } from '@/cloud/sync'
 import type { CloudBinding, CloudProviderId } from '@/cloud/types'
 import type { CloudOpenResult } from '@/cloud/sync'
 import { clearAllRowMarks, rowMarksRevision } from '@/composables/rowMarks'
 import { syncBodyRows } from '@/utils/sheetGrid'
 import { debounce } from 'lodash-es'
 import type { ImportOptions, WorkbookData } from '@/types/excel'
+
+const fillTarget = ref(parseFillHash(location.hash))
+
+function syncFillHash() {
+  fillTarget.value = parseFillHash(location.hash)
+}
+
+function closeFill() {
+  location.hash = ''
+  fillTarget.value = null
+}
 
 const workbookStore = useWorkbookStore()
 const appConfigStore = useAppConfigStore()
@@ -43,6 +56,7 @@ const {
   saveSessionToSqlite,
   loadSessionFromSqlite,
   loadSessionById,
+  readSessionWorkbook,
   downloadSqliteDatabase,
   deleteFileSession,
   adoptSessionForFile,
@@ -394,6 +408,47 @@ function handleSaveCloud() {
   void runCloudSync(true)
 }
 
+async function publishLocalSession(sessionId: string, provider: CloudProviderId) {
+  const taskId = progressStore.enqueue({
+    title: 'Đưa lên cloud',
+    detail: provider === 'google' ? 'Google Drive' : 'OneDrive',
+    sheetId: '',
+    kind: 'cloud',
+  })
+  progressStore.setStatus(taskId, 'running')
+  cloudSyncing.value = true
+  try {
+    const workbook = sessionId === activeSessionId.value && workbookStore.workbook
+      ? workbookStore.workbook
+      : await readSessionWorkbook(sessionId)
+    if (!workbook) {
+      progressStore.setStatus(taskId, 'cancelled')
+      progressStore.setDetail(taskId, 'Không đọc được phiên')
+      return
+    }
+    progressStore.setDetail(taskId, workbook.meta.fileName)
+    progressStore.setPercent(taskId, 10)
+    const binding = await publishLocalWorkbook(provider, workbook, (message) => {
+      progressStore.setDetail(taskId, `${workbook.meta.fileName} · ${message}`)
+      if (message.startsWith('Đang tải')) progressStore.setPercent(taskId, 80)
+    })
+    setBinding(sessionId, binding)
+    if (sessionId === activeSessionId.value) rememberCloudBaseline(sessionId, workbook)
+    progressStore.setPercent(taskId, 100)
+    progressStore.setStatus(taskId, 'done')
+    progressStore.setDetail(taskId, binding.file.name)
+    appConfigStore.addToast({ type: 'success', message: `Đã đưa ${binding.file.name} lên cloud` })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Không đưa được file lên cloud'
+    progressStore.setStatus(taskId, 'cancelled')
+    progressStore.setDetail(taskId, message)
+    appConfigStore.addToast({ type: 'error', message })
+  } finally {
+    progressStore.release(taskId)
+    cloudSyncing.value = false
+  }
+}
+
 async function handleExportXlsx() {
   if (!workbookStore.workbook) return
   try {
@@ -648,9 +703,11 @@ function handleHistoryRedo() {
     openGuide()
   })
 
+  window.addEventListener('hashchange', syncFillHash)
   onUnmounted(() => {
     window.removeEventListener('keydown', handleKeydown)
     window.removeEventListener('pagehide', onPageHide)
+    window.removeEventListener('hashchange', syncFillHash)
   })
 </script>
 
@@ -659,6 +716,7 @@ function handleHistoryRedo() {
     <!-- Toast Notifications -->
     <ToastContainer />
     <ProgressTaskDock />
+    <FillForm v-if="fillTarget" :provider="fillTarget.provider" :file-id="fillTarget.fileId" @close="closeFill" />
 
     <!-- Navbar -->
     <AppNavbar
@@ -674,6 +732,7 @@ function handleHistoryRedo() {
       @redo="handleHistoryRedo"
       @open-cloud="openCloud"
       @save-cloud="handleSaveCloud"
+      @publish-cloud="publishLocalSession"
     />
 
     <!-- Main Content Area -->

@@ -1,6 +1,7 @@
 import { microsoftAccessToken } from '@/cloud/microsoftAuth'
 import { microsoftRevision } from '@/cloud/microsoftFiles'
 import { apiError, authedJson } from '@/cloud/http'
+import { FORM_SHEET } from '@/cloud/formShare'
 import { LIVE_MAX_COLS, type CloudFileRef } from '@/cloud/types'
 import { columnLetter, sheetToMatrix, workbookFromSheetValues, type LiveRowClear, type LiveRowWrite } from '@/cloud/values'
 import type { WorkbookData } from '@/types/excel'
@@ -26,7 +27,7 @@ export async function pullMicrosoftWorkbook(file: CloudFileRef): Promise<{ workb
   const sheets = listed.value ?? []
   const values: { name: string; values: unknown[][] }[] = []
   for (const sheet of sheets) {
-    if (!sheet.id) continue
+    if (!sheet.id || sheet.name === FORM_SHEET) continue
     const path = `${file.graphPath}/workbook/worksheets/${encodeURIComponent(sheet.id)}/usedRange?$select=values`
     const token = await microsoftAccessToken()
     const response = await fetch(`https://graph.microsoft.com/v1.0/${path}`, {

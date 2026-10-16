@@ -1,6 +1,7 @@
 import { googleAccessToken } from '@/cloud/googleAuth'
 import { googleRevision } from '@/cloud/googleFiles'
 import { authedJson } from '@/cloud/http'
+import { FORM_SHEET } from '@/cloud/formShare'
 import { LIVE_MAX_COLS, LIVE_MAX_ROWS, type CloudFileRef } from '@/cloud/types'
 import {
   columnLetter,
@@ -79,7 +80,7 @@ async function resizeGrid(
 export async function pullGoogleSheet(file: CloudFileRef): Promise<{ workbook: WorkbookData; revision: string }> {
   const token = await googleAccessToken()
   const tabs = await loadTabs(file.id, token)
-  const titles = tabs.map((tab) => tab.properties?.title).filter((title): title is string => Boolean(title))
+  const titles = tabs.map((tab) => tab.properties?.title).filter((title): title is string => Boolean(title) && title !== FORM_SHEET)
   const values = []
   for (const title of titles) {
     const range = encodeURIComponent(`${quotedSheet(title)}!A1:${columnLetter(LIVE_MAX_COLS - 1)}${LIVE_MAX_ROWS + 1}`)

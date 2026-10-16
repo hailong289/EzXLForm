@@ -128,3 +128,21 @@ export async function uploadMicrosoftXlsx(file: CloudFileRef, blob: Blob): Promi
   const data = (await response.json()) as { eTag?: string }
   return data.eTag || ''
 }
+
+export async function createMicrosoftXlsx(name: string, blob: Blob): Promise<CloudFileRef> {
+  const token = await microsoftAccessToken()
+  const fileName = name.toLowerCase().endsWith('.xlsx') ? name : `${name}.xlsx`
+  const response = await fetch(
+    `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURIComponent(fileName)}:/content?@microsoft.graph.conflictBehavior=rename`,
+    {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': XLSX_MIME },
+      body: blob,
+    },
+  )
+  if (!response.ok) throw await apiError(response)
+  const item = (await response.json()) as DriveItem
+  const file = toRef(item)
+  if (!file) throw new Error('Không tạo được file trên OneDrive')
+  return file
+}

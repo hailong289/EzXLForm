@@ -3,7 +3,7 @@ import { History } from 'lucide-vue-next'
 import { useHistory } from '@/composables/useHistory'
 import { useLocale } from '@/composables/useLocale'
 
-defineProps<{ block?: boolean }>()
+defineProps<{ block?: boolean; compact?: boolean }>()
 
 const { activity } = useHistory()
 const { t } = useLocale()
@@ -41,7 +41,7 @@ function line(kind: 'do' | 'undo' | 'redo', text: string): string {
   <div v-else class="dropdown dropdown-bottom dropdown-end">
     <button type="button" tabindex="0" class="btn btn-ghost btn-xs gap-1" :title="t('nav.activity')">
       <History class="h-3.5 w-3.5" />
-      <span class="hidden md:inline">{{ t('nav.activity.menu') }}</span>
+      <span v-if="!compact" class="hidden md:inline">{{ t('nav.activity.menu') }}</span>
       <span v-if="activity.length" class="badge badge-xs badge-primary">{{ activity.length }}</span>
     </button>
     <div

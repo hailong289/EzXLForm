@@ -550,6 +550,14 @@ export function useSqliteStorage() {
     })
   }
 
+  async function readSessionWorkbook(sessionId: string): Promise<WorkbookData | null> {
+    return withSessionDatabase(sessionId, (db) => {
+      const result = workbookFromDatabase(db)
+      if (result) applyStoredRowMarks(result.sheets, readRowMarksFromDatabase(db))
+      return result
+    })
+  }
+
   async function loadSessionById(id: string): Promise<WorkbookData | null> {
     const binaryData = await getBinaryFromIndexedDB(sessionKey(id))
     if (!binaryData) return null
@@ -661,6 +669,7 @@ export function useSqliteStorage() {
     saveFormPresets,
     loadSessionFromSqlite,
     loadSessionById,
+    readSessionWorkbook,
     deleteFileSession,
     adoptSessionForFile,
     setActiveSessionId,

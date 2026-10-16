@@ -3,6 +3,7 @@ import {
   googleRevision,
   listGoogleFiles,
   uploadGoogleXlsx,
+  createGoogleXlsx,
 } from '@/cloud/googleFiles'
 import { pullGoogleSheet, pushGoogleRows, pushGoogleSheet } from '@/cloud/googleSheets'
 import {
@@ -10,8 +11,10 @@ import {
   listRecentExcel,
   microsoftRevision,
   uploadMicrosoftXlsx,
+  createMicrosoftXlsx,
 } from '@/cloud/microsoftFiles'
 import { pullMicrosoftWorkbook, pushMicrosoftRows, pushMicrosoftWorkbook } from '@/cloud/microsoftWorkbook'
+import { preserveFormSheet } from '@/cloud/formCloud'
 import { buildXlsxBlob } from '@/cloud/session'
 import { GOOGLE_SHEET_MIME, type CloudBinding, type CloudFileRef, type CloudOpenMode, type CloudProviderId } from '@/cloud/types'
 import { cloudBaseline, setCloudBaseline } from '@/cloud/baseline'
@@ -107,7 +110,23 @@ export async function writeCloudWorkbook(
     return revision
   }
   onProgress?.('Đang dựng file .xlsx...')
-  const blob = await buildXlsxBlob(workbook, onProgress)
+  const built = await buildXlsxBlob(workbook, onProgress)
+  const blob = await preserveFormSheet(binding.provider, binding.file, built)
   if (binding.provider === 'google') return uploadGoogleXlsx(binding.file.id, blob)
   return uploadMicrosoftXlsx(binding.file, blob)
+}
+
+export async function publishLocalWorkbook(
+  provider: CloudProviderId,
+  workbook: WorkbookData,
+  onProgress?: (message: string) => void,
+): Promise<CloudBinding> {
+  onProgress?.('Đang dựng file .xlsx...')
+  const blob = await buildXlsxBlob(workbook, onProgress)
+  onProgress?.('Đang tải lên cloud...')
+  const file = provider === 'google'
+    ? await createGoogleXlsx(workbook.meta.fileName, blob)
+    : await createMicrosoftXlsx(workbook.meta.fileName, blob)
+  const revision = provider === 'google' ? await googleRevision(file.id) : await microsoftRevision(file)
+  return { provider, mode: 'file', file, revision }
 }

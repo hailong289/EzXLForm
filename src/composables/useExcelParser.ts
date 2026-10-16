@@ -79,6 +79,7 @@ export function useExcelParser() {
       const sheets: SheetData[] = []
 
       wb.eachSheet((worksheet, sheetId) => {
+        if (worksheet.name === '_ezxl_form') return
         const rowCount = worksheet.rowCount
         const colCount = valueColumnCount(worksheet)
         const sourceGrid: CellValue[][] = []
